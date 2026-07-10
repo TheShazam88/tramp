@@ -28,12 +28,7 @@ function isStalePreviewError(error: unknown) {
 }
 
 function isAmbiguousExecutionOutcome(error: unknown) {
-  return (
-    (error instanceof ApiError && error.status >= 500) ||
-    error instanceof TypeError ||
-    (error instanceof Error &&
-      /network|failed to fetch|timeout|timed out|aborted/i.test(error.message))
-  );
+  return !(error instanceof ApiError) || error.status >= 500;
 }
 
 function safeErrorMessage(error: unknown, fallback: string) {

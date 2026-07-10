@@ -47,14 +47,16 @@ function purgeResult(
   };
 }
 
-function renderPanel() {
-  const queryClient = new QueryClient({
+function createQueryClient() {
+  return new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
+}
 
+function renderPanel(queryClient = createQueryClient()) {
   render(
     <QueryClientProvider client={queryClient}>
       <PurgeTestDataPanel />
@@ -62,6 +64,39 @@ function renderPanel() {
   );
 
   return queryClient;
+}
+
+const systemCacheKeys = [
+  queryKeys.watchDraft("watch-real"),
+  queryKeys.approvalToken("deal-real", "approval-real"),
+  queryKeys.dashboard,
+  queryKeys.bookings,
+  queryKeys.profile,
+  queryKeys.deal("deal-real", "watch-real"),
+] as const;
+
+function serializedKey(queryKey: readonly unknown[]) {
+  return JSON.stringify(queryKey);
+}
+
+async function seedSystemCaches(queryClient: QueryClient) {
+  const fetchCounts = new Map<string, number>();
+
+  await Promise.all(
+    systemCacheKeys.map(async (queryKey) => {
+      await queryClient.prefetchQuery({
+        queryKey,
+        queryFn: async () => {
+          const key = serializedKey(queryKey);
+          const count = (fetchCounts.get(key) ?? 0) + 1;
+          fetchCounts.set(key, count);
+          return { count };
+        },
+      });
+    }),
+  );
+
+  return fetchCounts;
 }
 
 function setClipboard(value: { writeText: (text: string) => Promise<void> } | undefined) {
@@ -485,15 +520,16 @@ describe("PurgeTestDataPanel", () => {
         detail: "Internal failure for secret_record_123.",
       }),
     },
+    {
+      label: "malformed success response",
+      error: new SyntaxError("Unexpected token in malformed_payload_456"),
+    },
   ])(
     "resets unsafe state and refreshes all queries after an ambiguous $label",
     async ({ error }) => {
       const user = userEvent.setup();
       vi.spyOn(travelWatchApi, "purgeTestData").mockRejectedValue(error);
-      const queryClient = renderPanel();
-      const invalidate = vi
-        .spyOn(queryClient, "invalidateQueries")
-        .mockResolvedValue(undefined);
+      renderPanel();
       await loadPreview(user, purgeResult({ warnings: [] }));
       await user.type(
         screen.getByRole("textbox", { name: "Type the confirmation phrase" }),
@@ -513,7 +549,9 @@ describe("PurgeTestDataPanel", () => {
       expect(alert).toHaveTextContent(
         "Request a fresh preview before trying again.",
       );
-      expect(alert).not.toHaveTextContent(/confidential-url|secret_record_123/);
+      expect(alert).not.toHaveTextContent(
+        /confidential-url|secret_record_123|malformed_payload_456/,
+      );
       await waitFor(() => expect(alert).toHaveFocus());
       expect(
         screen.queryByRole("region", { name: "Purge preview" }),
@@ -523,13 +561,46 @@ describe("PurgeTestDataPanel", () => {
           name: "Type the confirmation phrase",
         }),
       ).not.toBeInTheDocument();
-      expect(invalidate).toHaveBeenCalledTimes(1);
-      expect(invalidate).toHaveBeenCalledWith({ refetchType: "all" });
       expect(
         screen.getByRole("button", { name: "Preview purge" }),
       ).toBeEnabled();
     },
   );
+
+  it("refetches every seeded cache after an ambiguous execution outcome", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(travelWatchApi, "purgeTestData").mockRejectedValue(
+      new SyntaxError("Malformed successful purge response"),
+    );
+    const queryClient = createQueryClient();
+    const fetchCounts = await seedSystemCaches(queryClient);
+    renderPanel(queryClient);
+    await loadPreview(user, purgeResult({ warnings: [] }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Type the confirmation phrase" }),
+      confirmationPhrase,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Purge test data permanently" }),
+    );
+
+    expect(
+      await screen.findByRole("alert", { name: "Purge outcome unknown" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      for (const queryKey of systemCacheKeys) {
+        expect(fetchCounts.get(serializedKey(queryKey))).toBe(2);
+        expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(false);
+        expect(
+          queryClient.getQueryData<{ count: number }>(queryKey)?.count,
+        ).toBe(2);
+      }
+    });
+    expect(
+      screen.queryByRole("region", { name: "Purge preview" }),
+    ).not.toBeInTheDocument();
+  });
 
   it("shows the exact execution summary and invalidates every affected query", async () => {
     const user = userEvent.setup();
@@ -544,17 +615,9 @@ describe("PurgeTestDataPanel", () => {
       warnings: ["One live-linked record was preserved."],
     });
     vi.spyOn(travelWatchApi, "purgeTestData").mockResolvedValue(executed);
-    const queryClient = renderPanel();
-    queryClient.setQueryData(queryKeys.watchDraft("watch-1"), {
-      id: "watch-1",
-    });
-    queryClient.setQueryData(
-      queryKeys.approvalToken("deal-1", "approval-token"),
-      { valid: true },
-    );
-    const invalidate = vi
-      .spyOn(queryClient, "invalidateQueries")
-      .mockResolvedValue(undefined);
+    const queryClient = createQueryClient();
+    const fetchCounts = await seedSystemCaches(queryClient);
+    renderPanel(queryClient);
     await loadPreview(
       user,
       purgeResult({
@@ -605,8 +668,13 @@ describe("PurgeTestDataPanel", () => {
     ).not.toBeInTheDocument();
 
     await waitFor(() => {
-      expect(invalidate).toHaveBeenCalledTimes(1);
-      expect(invalidate).toHaveBeenCalledWith({ refetchType: "all" });
+      for (const queryKey of systemCacheKeys) {
+        expect(fetchCounts.get(serializedKey(queryKey))).toBe(2);
+        expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(false);
+        expect(
+          queryClient.getQueryData<{ count: number }>(queryKey)?.count,
+        ).toBe(2);
+      }
     });
   });
 

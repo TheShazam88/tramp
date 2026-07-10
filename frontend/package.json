@@ -7,7 +7,8 @@
     "build": "npm run check:copy && tsc --noEmit && vite build",
     "check:copy": "node scripts/check-user-copy.mjs",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --exclude \"e2e/**\"",
+    "test:browser": "playwright test",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -25,6 +26,7 @@
     "react-router-dom": "^7.18.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
