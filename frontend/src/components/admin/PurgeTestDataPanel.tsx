@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import { ApiError } from "@/api/client";
-import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
+import { ApiError, apiClient } from "@/api/client";
+import { travelWatchApi } from "@/api/travelWatchApi";
 import type { TestDataPurgeResult } from "@/api/types";
 import { Button, SectionHeading, Surface } from "@/components/ui/primitives";
 
@@ -24,6 +24,15 @@ function isStalePreviewError(error: unknown) {
     detail.includes("preview changed") ||
     detail.includes("stale") ||
     detail.includes("plan_digest")
+  );
+}
+
+function isAmbiguousExecutionOutcome(error: unknown) {
+  return (
+    (error instanceof ApiError && error.status >= 500) ||
+    error instanceof TypeError ||
+    (error instanceof Error &&
+      /network|failed to fetch|timeout|timed out|aborted/i.test(error.message))
   );
 }
 
@@ -96,30 +105,32 @@ function PurgeSummary({
       aria-label={label}
     >
       <h3>{heading}</h3>
-      <dl className="key-value-list purge-count-list">
-        <div>
-          <dt>Dry run</dt>
-          <dd>{result.dryRun ? "Yes" : "No"}</dd>
-        </div>
-        {counts.map(([key, count]) => (
-          <div key={key}>
-            <dt>{countLabel(key)}</dt>
-            <dd>{count}</dd>
+      <div role="group" aria-label="Purge counts">
+        <dl className="key-value-list purge-count-list">
+          <div>
+            <dt>Dry run</dt>
+            <dd>{result.dryRun ? "Yes" : "No"}</dd>
           </div>
-        ))}
-        <div>
-          <dt>Watches reset</dt>
-          <dd>{result.resetWatchCount}</dd>
-        </div>
-        <div>
-          <dt>Unknown cancellation provenance</dt>
-          <dd>{result.unknownCancellationCount}</dd>
-        </div>
-        <div>
-          <dt>Unreverted feedback</dt>
-          <dd>{result.unrevertedFeedbackCount}</dd>
-        </div>
-      </dl>
+          {counts.map(([key, count]) => (
+            <div key={key}>
+              <dt>{countLabel(key)}</dt>
+              <dd>{count}</dd>
+            </div>
+          ))}
+          <div>
+            <dt>Watches reset</dt>
+            <dd>{result.resetWatchCount}</dd>
+          </div>
+          <div>
+            <dt>Unknown cancellation provenance</dt>
+            <dd>{result.unknownCancellationCount}</dd>
+          </div>
+          <div>
+            <dt>Unreverted feedback</dt>
+            <dd>{result.unrevertedFeedbackCount}</dd>
+          </div>
+        </dl>
+      </div>
       <div>
         <p className="field-label">Warnings</p>
         {result.warnings.length > 0 ? (
@@ -145,15 +156,21 @@ function PurgeSummary({
 
 export function PurgeTestDataPanel() {
   const queryClient = useQueryClient();
+  const liveApiMode = apiClient.mode === "live";
   const [preview, setPreview] = useState<TestDataPurgeResult | null>(null);
   const [executionResult, setExecutionResult] =
     useState<TestDataPurgeResult | null>(null);
   const [confirmation, setConfirmation] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const phraseRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
+  const previewStatusRef = useRef<HTMLDivElement>(null);
   const successRef = useRef<HTMLDivElement>(null);
+  const activationLockRef = useRef(false);
+  const previewRequestRef = useRef<Promise<TestDataPurgeResult> | null>(null);
+  const purgeRequestRef = useRef<Promise<TestDataPurgeResult> | null>(null);
 
   useEffect(() => {
     if (errorMessage) {
@@ -162,15 +179,35 @@ export function PurgeTestDataPanel() {
   }, [errorMessage]);
 
   useEffect(() => {
+    if (preview) {
+      previewStatusRef.current?.focus();
+    }
+  }, [preview]);
+
+  useEffect(() => {
     if (executionResult) {
       successRef.current?.focus();
     }
   }, [executionResult]);
 
   const previewMutation = useMutation({
-    mutationFn: () => travelWatchApi.previewTestDataPurge(),
+    mutationFn: async () => {
+      if (previewRequestRef.current) {
+        return previewRequestRef.current;
+      }
+      const request = travelWatchApi.previewTestDataPurge();
+      previewRequestRef.current = request;
+      try {
+        return await request;
+      } finally {
+        if (previewRequestRef.current === request) {
+          previewRequestRef.current = null;
+        }
+      }
+    },
     onMutate: () => {
       setErrorMessage("");
+      setOutcomeUnknown(false);
       setExecutionResult(null);
       setCopyStatus("");
     },
@@ -181,17 +218,34 @@ export function PurgeTestDataPanel() {
     onError: (error) => {
       setPreview(null);
       setConfirmation("");
+      setOutcomeUnknown(false);
       setErrorMessage(
         safeErrorMessage(error, "Unable to preview the test data purge."),
       );
     },
+    onSettled: () => {
+      activationLockRef.current = false;
+    },
   });
 
   const purgeMutation = useMutation({
-    mutationFn: (payload: { confirmation: string; planDigest: string }) =>
-      travelWatchApi.purgeTestData(payload),
+    mutationFn: async (payload: { confirmation: string; planDigest: string }) => {
+      if (purgeRequestRef.current) {
+        return purgeRequestRef.current;
+      }
+      const request = travelWatchApi.purgeTestData(payload);
+      purgeRequestRef.current = request;
+      try {
+        return await request;
+      } finally {
+        if (purgeRequestRef.current === request) {
+          purgeRequestRef.current = null;
+        }
+      }
+    },
     onMutate: () => {
       setErrorMessage("");
+      setOutcomeUnknown(false);
       setExecutionResult(null);
       setCopyStatus("");
     },
@@ -199,23 +253,30 @@ export function PurgeTestDataPanel() {
       setExecutionResult(result);
       setPreview(null);
       setConfirmation("");
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.integrations }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.systemStatus }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.profile }),
-        queryClient.invalidateQueries({ queryKey: ["deal"] }),
-      ]);
+      await queryClient.invalidateQueries({ refetchType: "all" });
     },
-    onError: (error) => {
+    onError: async (error) => {
+      if (isAmbiguousExecutionOutcome(error)) {
+        setPreview(null);
+        setConfirmation("");
+        setOutcomeUnknown(true);
+        setErrorMessage(
+          "TRAMP could not confirm whether the purge completed. The preview and confirmation were cleared, and cached data is being refreshed. Request a fresh preview before trying again.",
+        );
+        await queryClient.invalidateQueries({ refetchType: "all" });
+        return;
+      }
       if (isStalePreviewError(error)) {
         setPreview(null);
         setConfirmation("");
       }
+      setOutcomeUnknown(false);
       setErrorMessage(
         safeErrorMessage(error, "The backend rejected the test data purge."),
       );
+    },
+    onSettled: () => {
+      activationLockRef.current = false;
     },
   });
 
@@ -226,7 +287,8 @@ export function PurgeTestDataPanel() {
   );
   const pending = previewMutation.isPending || purgeMutation.isPending;
   const canPurge = Boolean(
-    preview?.planDigest &&
+    liveApiMode &&
+      preview?.planDigest &&
       confirmation === confirmationPhrase &&
       !pending,
   );
@@ -247,6 +309,25 @@ export function PurgeTestDataPanel() {
     }
   };
 
+  const requestPreview = () => {
+    if (activationLockRef.current || pending) {
+      return;
+    }
+    activationLockRef.current = true;
+    previewMutation.mutate();
+  };
+
+  const executePurge = () => {
+    if (!preview || !canPurge || activationLockRef.current) {
+      return;
+    }
+    activationLockRef.current = true;
+    purgeMutation.mutate({
+      confirmation,
+      planDigest: preview.planDigest,
+    });
+  };
+
   return (
     <Surface className="purge-test-data-panel">
       <SectionHeading
@@ -260,11 +341,18 @@ export function PurgeTestDataPanel() {
         simulated is eligible. Always review the current preview before purging.
       </div>
 
+      {!liveApiMode ? (
+        <div className="notice" role="status" aria-label="Mock purge mode">
+          <strong>Preview only in mock frontend mode.</strong> Destructive execution
+          is disabled. Switch the frontend to live API mode to run a real purge.
+        </div>
+      ) : null}
+
       <div className="panel-actions">
         <Button
           type="button"
           variant="secondary"
-          onClick={() => previewMutation.mutate()}
+          onClick={requestPreview}
           disabled={pending}
         >
           {previewMutation.isPending ? "Loading preview..." : "Preview purge"}
@@ -276,7 +364,7 @@ export function PurgeTestDataPanel() {
           ref={errorRef}
           className="notice notice-alert"
           role="alert"
-          aria-label="Purge error"
+          aria-label={outcomeUnknown ? "Purge outcome unknown" : "Purge error"}
           tabIndex={-1}
         >
           {errorMessage}
@@ -304,6 +392,16 @@ export function PurgeTestDataPanel() {
 
       {preview ? (
         <>
+          <div
+            ref={previewStatusRef}
+            className="notice notice-value"
+            role="status"
+            aria-label="Purge preview ready"
+            aria-live="polite"
+            tabIndex={-1}
+          >
+            Purge preview ready. Review every count and warning before continuing.
+          </div>
           <PurgeSummary
             result={preview}
             label="Purge preview"
@@ -322,69 +420,63 @@ export function PurgeTestDataPanel() {
             </div>
           ) : null}
 
-          <div className="form-shell stack-tight">
-            <h3>Confirm permanent purge</h3>
-            <p className="helper-copy">
-              Copy the required phrase, then type it into the separate confirmation
-              field exactly as shown.
-            </p>
-            <div className="toolbar-row">
-              <label className="field-stack purge-confirmation-phrase">
-                <span>Required confirmation phrase</span>
+          {liveApiMode ? (
+            <div className="form-shell stack-tight">
+              <h3>Confirm permanent purge</h3>
+              <p className="helper-copy">
+                Copy the required phrase, then type it into the separate confirmation
+                field exactly as shown.
+              </p>
+              <div className="toolbar-row">
+                <label className="field-stack purge-confirmation-phrase">
+                  <span>Required confirmation phrase</span>
+                  <input
+                    ref={phraseRef}
+                    className="text-input inline-code"
+                    aria-label="Required purge confirmation phrase"
+                    readOnly
+                    value={confirmationPhrase}
+                  />
+                </label>
+                <Button type="button" variant="secondary" onClick={copyPhrase}>
+                  Copy phrase
+                </Button>
+              </div>
+              {copyStatus ? (
+                <div
+                  className="notice"
+                  role="status"
+                  aria-label="Copy status"
+                >
+                  {copyStatus}
+                </div>
+              ) : null}
+              <label className="field-stack">
+                <span>Type the confirmation phrase</span>
                 <input
-                  ref={phraseRef}
-                  className="text-input inline-code"
-                  aria-label="Required purge confirmation phrase"
-                  readOnly
-                  value={confirmationPhrase}
+                  className="text-input"
+                  aria-label="Type the confirmation phrase"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={confirmation}
+                  onChange={(event) => setConfirmation(event.target.value)}
                 />
               </label>
-              <Button type="button" variant="secondary" onClick={copyPhrase}>
-                Copy phrase
-              </Button>
-            </div>
-            {copyStatus ? (
-              <div
-                className="notice"
-                role="status"
-                aria-label="Copy status"
-              >
-                {copyStatus}
+              <div className="panel-actions">
+                <Button
+                  type="button"
+                  className="button-destructive"
+                  aria-label="Purge test data permanently"
+                  onClick={executePurge}
+                  disabled={!canPurge}
+                >
+                  {purgeMutation.isPending
+                    ? "Purging test data..."
+                    : "Purge test data permanently"}
+                </Button>
               </div>
-            ) : null}
-            <label className="field-stack">
-              <span>Type the confirmation phrase</span>
-              <input
-                className="text-input"
-                aria-label="Type the confirmation phrase"
-                autoComplete="off"
-                spellCheck={false}
-                value={confirmation}
-                onChange={(event) => setConfirmation(event.target.value)}
-              />
-            </label>
-            <div className="panel-actions">
-              <Button
-                type="button"
-                className="button-destructive"
-                aria-label="Purge test data permanently"
-                onClick={() => {
-                  if (!preview || !canPurge) {
-                    return;
-                  }
-                  purgeMutation.mutate({
-                    confirmation,
-                    planDigest: preview.planDigest,
-                  });
-                }}
-                disabled={!canPurge}
-              >
-                {purgeMutation.isPending
-                  ? "Purging test data..."
-                  : "Purge test data permanently"}
-              </Button>
             </div>
-          </div>
+          ) : null}
         </>
       ) : null}
     </Surface>

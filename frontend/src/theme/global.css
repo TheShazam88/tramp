@@ -1057,11 +1057,6 @@ a.button {
   outline-offset: 3px;
 }
 
-.purge-count-list {
-  max-height: 24rem;
-  overflow: auto;
-}
-
 .purge-confirmation-phrase {
   flex: 1 1 18rem;
 }

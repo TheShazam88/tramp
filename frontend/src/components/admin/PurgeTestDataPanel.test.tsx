@@ -1,15 +1,32 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "@/api/client";
+import { ApiError, apiClient } from "@/api/client";
 import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
 import type { TestDataPurgeResult } from "@/api/types";
 import { PurgeTestDataPanel } from "@/components/admin/PurgeTestDataPanel";
 
 const confirmationPhrase = "PURGE TEST DATA";
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalApiMode = apiClient.mode;
+const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 function purgeResult(
   overrides: Partial<TestDataPurgeResult> = {},
@@ -67,10 +84,16 @@ async function loadPreview(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  apiClient.mode = originalApiMode;
   if (originalClipboard) {
     Object.defineProperty(navigator, "clipboard", originalClipboard);
   } else {
     Reflect.deleteProperty(navigator, "clipboard");
+  }
+  if (originalInnerWidth) {
+    Object.defineProperty(window, "innerWidth", originalInnerWidth);
+  } else {
+    Reflect.deleteProperty(window, "innerWidth");
   }
 });
 
@@ -121,6 +144,81 @@ describe("PurgeTestDataPanel", () => {
       ),
     ).toBeInTheDocument();
     expect(purge).not.toHaveBeenCalled();
+  });
+
+  it("announces and focuses a successful preview", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await loadPreview(user, purgeResult({ warnings: [] }));
+
+    const status = screen.getByRole("status", {
+      name: "Purge preview ready",
+    });
+    expect(status).toHaveAttribute("aria-live", "polite");
+    await waitFor(() => expect(status).toHaveFocus());
+  });
+
+  it("keeps every count accessible by keyboard at a small viewport", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 320,
+    });
+    window.dispatchEvent(new Event("resize"));
+    const user = userEvent.setup();
+    const deletedCounts = {
+      audit_log: 1,
+      booking_attempts: 2,
+      bookings: 3,
+      cancellations: 4,
+      deal_feedback: 5,
+      deals: 6,
+      disruptions: 7,
+      notification_deliveries: 8,
+      price_observations: 9,
+      price_stats: 10,
+      rejected_fingerprints: 11,
+      spend_ledger: 12,
+      suppressed_attributes: 13,
+    };
+    renderPanel();
+
+    const preview = await loadPreview(
+      user,
+      purgeResult({ deletedCounts, warnings: [] }),
+    );
+    const countList = within(preview).getByRole("group", {
+      name: "Purge counts",
+    });
+
+    for (const label of [
+      "Audit log",
+      "Booking attempts",
+      "Bookings",
+      "Cancellations",
+      "Deal feedback",
+      "Deals",
+      "Disruptions",
+      "Notification deliveries",
+      "Price observations",
+      "Price stats",
+      "Rejected fingerprints",
+      "Spend ledger",
+      "Suppressed attributes",
+    ]) {
+      expect(within(countList).getByText(label)).toBeVisible();
+    }
+
+    const status = screen.getByRole("status", {
+      name: "Purge preview ready",
+    });
+    await waitFor(() => expect(status).toHaveFocus());
+    await user.tab();
+    expect(
+      screen.getByRole("textbox", {
+        name: "Required purge confirmation phrase",
+      }),
+    ).toHaveFocus();
   });
 
   it("copies the read-only confirmation phrase and reports success", async () => {
@@ -190,6 +288,110 @@ describe("PurgeTestDataPanel", () => {
     await user.clear(confirmation);
     await user.type(confirmation, confirmationPhrase);
     expect(purgeButton).toBeEnabled();
+  });
+
+  it("coalesces rapid preview activation into one request", async () => {
+    const pendingPreview = deferred<TestDataPurgeResult>();
+    const preview = vi
+      .spyOn(travelWatchApi, "previewTestDataPurge")
+      .mockReturnValue(pendingPreview.promise);
+    renderPanel();
+    const button = screen.getByRole("button", { name: "Preview purge" });
+
+    act(() => {
+      button.click();
+      button.click();
+    });
+
+    await waitFor(() => {
+      expect(preview).toHaveBeenCalledTimes(1);
+      expect(button).toBeDisabled();
+    });
+
+    await act(async () => {
+      pendingPreview.resolve(purgeResult({ warnings: [] }));
+      await pendingPreview.promise;
+    });
+    expect(
+      await screen.findByRole("status", { name: "Purge preview ready" }),
+    ).toBeInTheDocument();
+  });
+
+  it("coalesces rapid purge activation into one request", async () => {
+    const user = userEvent.setup();
+    const pendingPurge = deferred<TestDataPurgeResult>();
+    const purge = vi
+      .spyOn(travelWatchApi, "purgeTestData")
+      .mockReturnValue(pendingPurge.promise);
+    renderPanel();
+    await loadPreview(user, purgeResult({ warnings: [] }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Type the confirmation phrase" }),
+      confirmationPhrase,
+    );
+    const button = screen.getByRole("button", {
+      name: "Purge test data permanently",
+    });
+
+    act(() => {
+      button.click();
+      button.click();
+    });
+
+    await waitFor(() => {
+      expect(purge).toHaveBeenCalledTimes(1);
+      expect(button).toBeDisabled();
+    });
+
+    await act(async () => {
+      pendingPurge.resolve(purgeResult({ dryRun: false, warnings: [] }));
+      await pendingPurge.promise;
+    });
+    expect(
+      await screen.findByRole("status", { name: "Purge succeeded" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps mock frontend mode preview-only", async () => {
+    apiClient.mode = "mock";
+    const preview = vi
+      .spyOn(travelWatchApi, "previewTestDataPurge")
+      .mockResolvedValue(
+        purgeResult({
+          deletedCounts: { bookings: 0, deals: 0 },
+          resetWatchCount: 0,
+          planDigest: "0".repeat(64),
+          warnings: ["Demo preview only. No backend data was changed."],
+        }),
+      );
+    const purge = vi.spyOn(travelWatchApi, "purgeTestData");
+    renderPanel();
+
+    expect(
+      screen.getByRole("status", { name: "Mock purge mode" }),
+    ).toHaveTextContent(
+      "Switch the frontend to live API mode to run a real purge.",
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Preview purge" }));
+
+    expect(preview).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByRole("status", { name: "Purge preview ready" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Type the confirmation phrase" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Purge test data permanently" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Test data purge completed. The exact backend result appears below.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(purge).not.toHaveBeenCalled();
   });
 
   it("allows purge while clearly retaining unknown provenance and unreverted feedback", async () => {
@@ -272,6 +474,63 @@ describe("PurgeTestDataPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it.each([
+    {
+      label: "network failure",
+      error: new TypeError("Failed to fetch confidential-url"),
+    },
+    {
+      label: "server failure",
+      error: new ApiError("Request failed with status 503", 503, {
+        detail: "Internal failure for secret_record_123.",
+      }),
+    },
+  ])(
+    "resets unsafe state and refreshes all queries after an ambiguous $label",
+    async ({ error }) => {
+      const user = userEvent.setup();
+      vi.spyOn(travelWatchApi, "purgeTestData").mockRejectedValue(error);
+      const queryClient = renderPanel();
+      const invalidate = vi
+        .spyOn(queryClient, "invalidateQueries")
+        .mockResolvedValue(undefined);
+      await loadPreview(user, purgeResult({ warnings: [] }));
+      await user.type(
+        screen.getByRole("textbox", { name: "Type the confirmation phrase" }),
+        confirmationPhrase,
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Purge test data permanently" }),
+      );
+
+      const alert = await screen.findByRole("alert", {
+        name: "Purge outcome unknown",
+      });
+      expect(alert).toHaveTextContent(
+        "TRAMP could not confirm whether the purge completed.",
+      );
+      expect(alert).toHaveTextContent(
+        "Request a fresh preview before trying again.",
+      );
+      expect(alert).not.toHaveTextContent(/confidential-url|secret_record_123/);
+      await waitFor(() => expect(alert).toHaveFocus());
+      expect(
+        screen.queryByRole("region", { name: "Purge preview" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Type the confirmation phrase",
+        }),
+      ).not.toBeInTheDocument();
+      expect(invalidate).toHaveBeenCalledTimes(1);
+      expect(invalidate).toHaveBeenCalledWith({ refetchType: "all" });
+      expect(
+        screen.getByRole("button", { name: "Preview purge" }),
+      ).toBeEnabled();
+    },
+  );
+
   it("shows the exact execution summary and invalidates every affected query", async () => {
     const user = userEvent.setup();
     const executed = purgeResult({
@@ -286,6 +545,13 @@ describe("PurgeTestDataPanel", () => {
     });
     vi.spyOn(travelWatchApi, "purgeTestData").mockResolvedValue(executed);
     const queryClient = renderPanel();
+    queryClient.setQueryData(queryKeys.watchDraft("watch-1"), {
+      id: "watch-1",
+    });
+    queryClient.setQueryData(
+      queryKeys.approvalToken("deal-1", "approval-token"),
+      { valid: true },
+    );
     const invalidate = vi
       .spyOn(queryClient, "invalidateQueries")
       .mockResolvedValue(undefined);
@@ -339,24 +605,8 @@ describe("PurgeTestDataPanel", () => {
     ).not.toBeInTheDocument();
 
     await waitFor(() => {
-      expect(invalidate).toHaveBeenCalledWith({
-        queryKey: queryKeys.integrations,
-      });
-      expect(invalidate).toHaveBeenCalledWith({
-        queryKey: queryKeys.systemStatus,
-      });
-      expect(invalidate).toHaveBeenCalledWith({
-        queryKey: queryKeys.dashboard,
-      });
-      expect(invalidate).toHaveBeenCalledWith({
-        queryKey: queryKeys.bookings,
-      });
-      expect(invalidate).toHaveBeenCalledWith({
-        queryKey: queryKeys.profile,
-      });
-      expect(invalidate).toHaveBeenCalledWith({
-        queryKey: ["deal"],
-      });
+      expect(invalidate).toHaveBeenCalledTimes(1);
+      expect(invalidate).toHaveBeenCalledWith({ refetchType: "all" });
     });
   });
 
