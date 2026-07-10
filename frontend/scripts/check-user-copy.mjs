@@ -10,6 +10,7 @@ const textExtensions = new Set([
   ".jsx",
   ".css",
   ".html",
+  ".svg",
   ".json",
   ".md",
 ]);
@@ -77,15 +78,20 @@ for (const root of roots) {
 }
 
 const failures = [];
+let scannedFileCount = 0;
 for (const file of files) {
-  let text;
+  let content;
   try {
-    text = await readFile(file, "utf8");
+    content = await readFile(file);
   } catch (error) {
     reportFilesystemError("read file", file, error);
     continue;
   }
 
+  if (content.includes(0)) continue;
+
+  scannedFileCount += 1;
+  const text = content.toString("utf8");
   text.split(/\r?\n/).forEach((line, index) => {
     if (forbidden.test(line)) {
       failures.push(`${file}:${index + 1}: ${line.trim()}`);
@@ -101,5 +107,5 @@ if (failures.length) {
 if (failures.length || hadFilesystemError) {
   process.exitCode = 1;
 } else {
-  console.log(`Copy check passed across ${files.length} files.`);
+  console.log(`Copy check passed across ${scannedFileCount} files.`);
 }
