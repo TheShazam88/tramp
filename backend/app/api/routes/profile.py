@@ -48,6 +48,7 @@ from app.db.models import (
 )
 from app.db.session import get_db_session
 from app.security.crypto import decrypt_with_app_secret, encrypt_with_app_secret
+from app.tramp_stamp_service import stamp_balance
 from app.travel_readiness import build_household_workspace_summary
 
 router = APIRouter()
@@ -482,6 +483,7 @@ def _build_profile_summary(*, db: Session, user: User) -> ProfileSummaryResponse
     )
 
     return ProfileSummaryResponse(
+        tramp_stamp_balance=stamp_balance(db=db, user_id=user.id),
         settings=_serialize_settings(user),
         preferences=_serialize_user_preference(preference),
         travelers=[

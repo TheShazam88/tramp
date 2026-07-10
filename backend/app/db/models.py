@@ -11,6 +11,7 @@ from sqlalchemy import (
 )
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -25,6 +26,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.schema import conv
 
 from app.db.base import Base, CreatedTimestampMixin, UpdatedTimestampMixin, UUIDPrimaryKeyMixin
 
@@ -756,6 +758,38 @@ class SpendLedger(UUIDPrimaryKeyMixin, Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     booked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TrampStampLedger(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "tramp_stamp_ledger"
+    __table_args__ = (
+        UniqueConstraint("booking_id", name="uq_tramp_stamp_ledger_booking_id"),
+        CheckConstraint(
+            "amount = 1",
+            name=conv("ck_tramp_stamp_ledger_single_stamp"),
+        ),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        SQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    booking_id: Mapped[UUID] = mapped_column(
+        SQLUUID(as_uuid=True),
+        ForeignKey("bookings.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    amount: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    awarded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    meta_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class Disruption(UUIDPrimaryKeyMixin, Base):

@@ -573,6 +573,7 @@ class HouseholdWorkspaceSummaryResponse(BaseModel):
 
 
 class ProfileSummaryResponse(BaseModel):
+    tramp_stamp_balance: int
     settings: UserSettingsResponse
     preferences: UserPreferenceResponse
     travelers: list[TravelerResponse]
