@@ -47,82 +47,112 @@ export function BookingsPage() {
       {data.fallbackNote ? <div className="notice notice-value">{data.fallbackNote}</div> : null}
 
       <div className="stack">
-        {data.items.map((booking) => (
-          <Surface key={booking.id} className="watch-card">
-            <div className="watch-topline">
-              <div>
-                <h3>{booking.title}</h3>
-                <p className="item-copy">
-                  {booking.when} · {booking.provider}
-                </p>
+        {data.items.map((booking) => {
+          const unresolvedDisruption = booking.disruptions?.find(
+            (disruption) => disruption.status !== "resolved",
+          );
+
+          return (
+            <Surface key={booking.id} className="watch-card">
+              <div className="watch-topline">
+                <div>
+                  <h3>{booking.title}</h3>
+                  <p className="item-copy">
+                    {booking.when} · {booking.provider}
+                  </p>
+                </div>
+                <Badge tone="value">{booking.status}</Badge>
               </div>
-              <Badge tone="value">{booking.status}</Badge>
-            </div>
-            <p className="hero-context">{booking.amount}</p>
-            <div className="badge-row">
-              {booking.bookingStatus ? <Badge tone="luxury">{booking.bookingStatus.replace(/_/g, " ")}</Badge> : null}
-              {booking.cancellationStatus ? (
-                <Badge tone="alert">{booking.cancellationStatus.replace(/_/g, " ")} cancellation</Badge>
+              <p className="hero-context">{booking.amount}</p>
+              <div className="badge-row">
+                {booking.bookingStatus ? (
+                  <Badge tone="luxury">{booking.bookingStatus.replace(/_/g, " ")}</Badge>
+                ) : null}
+                {booking.cancellationStatus ? (
+                  <Badge tone="alert">
+                    {booking.cancellationStatus.replace(/_/g, " ")} cancellation
+                  </Badge>
+                ) : null}
+                {booking.refundStatus ? <Badge tone="muted">{booking.refundStatus}</Badge> : null}
+              </div>
+              {booking.refundAmount ? (
+                <p className="item-copy">Refund state: {booking.refundAmount}</p>
               ) : null}
-              {booking.refundStatus ? <Badge tone="muted">{booking.refundStatus}</Badge> : null}
-            </div>
-            {booking.refundAmount ? <p className="item-copy">Refund state: {booking.refundAmount}</p> : null}
-            {booking.providerReference ? <p className="item-copy">Provider ref: {booking.providerReference}</p> : null}
-            {booking.statusDetail ? <p className="item-copy">{booking.statusDetail}</p> : null}
-            {booking.calendarDetail ? <p className="item-copy">{booking.calendarDetail}</p> : null}
-            {booking.notificationStatuses && booking.notificationStatuses.length > 0 ? (
-              <ul className="info-list">
-                {booking.notificationStatuses.map((status) => (
-                  <li key={status}>{status}</li>
-                ))}
-              </ul>
-            ) : null}
-            {booking.disruptionStatuses && booking.disruptionStatuses.length > 0 ? (
-              <ul className="info-list">
-                {booking.disruptionStatuses.map((status) => (
-                  <li key={status}>{status}</li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="button-row">
-              {booking.dealId ? (
-                <Button variant="secondary" to={`/deals/${booking.dealId}${booking.watchId ? `?watchId=${booking.watchId}` : ""}`}>
-                  Open deal review
-                </Button>
+              {booking.providerReference ? (
+                <p className="item-copy">Provider ref: {booking.providerReference}</p>
               ) : null}
-              {booking.actions
-                .filter((action) => action !== "Open deal review")
-                .map((action) => (
-                  <Button key={action} variant="ghost" to={booking.dealId ? `/deals/${booking.dealId}` : "/bookings"}>
-                    {action}
+              {booking.statusDetail ? <p className="item-copy">{booking.statusDetail}</p> : null}
+              {booking.calendarDetail ? <p className="item-copy">{booking.calendarDetail}</p> : null}
+              {booking.notificationStatuses && booking.notificationStatuses.length > 0 ? (
+                <ul className="info-list">
+                  {booking.notificationStatuses.map((status) => (
+                    <li key={status}>{status}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {booking.disruptionStatuses && booking.disruptionStatuses.length > 0 ? (
+                <ul className="info-list">
+                  {booking.disruptionStatuses.map((status) => (
+                    <li key={status}>{status}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <div className="button-row">
+                {booking.dealId ? (
+                  <Button
+                    variant="secondary"
+                    to={`/deals/${booking.dealId}${booking.watchId ? `?watchId=${booking.watchId}` : ""}`}
+                  >
+                    Open deal review
                   </Button>
-                ))}
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => createDisruptionMutation.mutate(booking.id)}
-                disabled={createDisruptionMutation.isPending}
-              >
-                {createDisruptionMutation.isPending ? "Injecting..." : "Simulate disruption"}
-              </Button>
-              {booking.disruptions?.some((disruption) => disruption.status !== "resolved") ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => {
-                    const unresolved = booking.disruptions?.find((disruption) => disruption.status !== "resolved");
-                    if (unresolved) {
-                      resolveDisruptionMutation.mutate(unresolved.id);
-                    }
-                  }}
-                  disabled={resolveDisruptionMutation.isPending}
-                >
-                  {resolveDisruptionMutation.isPending ? "Resolving..." : "Resolve disruption"}
-                </Button>
-              ) : null}
-            </div>
-          </Surface>
-        ))}
+                ) : null}
+                {booking.actions
+                  .filter((action) => action !== "Open deal review")
+                  .map((action) => (
+                    <Button
+                      key={action}
+                      variant="ghost"
+                      to={booking.dealId ? `/deals/${booking.dealId}` : "/bookings"}
+                    >
+                      {action}
+                    </Button>
+                  ))}
+              </div>
+
+              <details className="form-disclosure">
+                <summary>Local test tools</summary>
+                <div className="stack-tight form-grid-gap-top">
+                  <p className="helper-copy">
+                    Local-only simulation controls. These test endpoints do not represent production
+                    provider behavior.
+                  </p>
+                  <div className="button-row">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => createDisruptionMutation.mutate(booking.id)}
+                      disabled={createDisruptionMutation.isPending}
+                    >
+                      {createDisruptionMutation.isPending ? "Injecting..." : "Simulate disruption"}
+                    </Button>
+                    {unresolvedDisruption ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => resolveDisruptionMutation.mutate(unresolvedDisruption.id)}
+                        disabled={resolveDisruptionMutation.isPending}
+                      >
+                        {resolveDisruptionMutation.isPending
+                          ? "Resolving..."
+                          : "Resolve disruption"}
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </details>
+            </Surface>
+          );
+        })}
       </div>
 
       <EmptyState

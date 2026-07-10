@@ -984,6 +984,12 @@ a.button {
   display: none;
 }
 
+.form-disclosure summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--value) 42%, transparent);
+  outline-offset: 5px;
+  border-radius: 10px;
+}
+
 .credential-guide-summary {
   display: flex;
   align-items: center;

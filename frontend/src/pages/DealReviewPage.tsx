@@ -111,6 +111,8 @@ export function DealReviewPage() {
     Boolean(logicalAttempt),
   );
   const [automaticPollScheduled, setAutomaticPollScheduled] = useState(false);
+  const paymentMethodInputRef = useRef<HTMLSelectElement>(null);
+  const totpInputRef = useRef<HTMLInputElement>(null);
   const bookingFeedbackRef = useRef<HTMLDivElement>(null);
   const navigationAlertRef = useRef<HTMLDivElement>(null);
   const bookingRequestRef = useRef<BookDealRequest | null>(null);
@@ -139,6 +141,8 @@ export function DealReviewPage() {
     queryFn: () => travelWatchApi.verifyApprovalToken({ dealId, token: approvalTokenFromLink }),
     enabled: approvalTokenFromLink.length > 0,
   });
+  const linkedApprovalVerified =
+    approvalTokenFromLink.length > 0 && approvalTokenVerification.data?.valid === true;
 
   const bookingMutation = useMutation<BookingMutationOutcome, never, void>({
     mutationFn: async () => {
@@ -496,6 +500,24 @@ export function DealReviewPage() {
   useEffect(() => {
     bookingFeedbackRef.current?.focus();
   }, [bookingFeedback]);
+
+  useEffect(() => {
+    if (linkedApprovalVerified) {
+      setShowApprovalForm(true);
+    }
+  }, [linkedApprovalVerified]);
+
+  useEffect(() => {
+    if (!linkedApprovalVerified || !showApprovalForm || !data) {
+      return;
+    }
+
+    const focusTarget =
+      paymentMethodInputRef.current && !paymentMethodInputRef.current.disabled
+        ? paymentMethodInputRef.current
+        : totpInputRef.current;
+    focusTarget?.focus();
+  }, [data, linkedApprovalVerified, profileWorkspace, showApprovalForm]);
 
   useEffect(() => {
     const consumedToken = consumedApprovalTokenRef.current;
@@ -1000,6 +1022,7 @@ export function DealReviewPage() {
                 <div className="field-stack">
                   <label htmlFor="booking-payment-method">Saved payment method</label>
                   <select
+                    ref={paymentMethodInputRef}
                     id="booking-payment-method"
                     className="text-input"
                     value={paymentMethodId}
@@ -1044,6 +1067,7 @@ export function DealReviewPage() {
               <div className="field-stack">
                 <label htmlFor="booking-totp">Six-digit TOTP code</label>
                 <input
+                  ref={totpInputRef}
                   id="booking-totp"
                   className="text-input"
                   inputMode="numeric"

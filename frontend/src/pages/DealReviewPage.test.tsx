@@ -201,7 +201,9 @@ async function openAndFillSecureForm(
   user: ReturnType<typeof userEvent.setup>,
   masterKey = "master-secret",
 ) {
-  await user.click(await screen.findByRole("button", { name: "Book now" }));
+  if (!screen.queryByLabelText("Saved payment method")) {
+    await user.click(await screen.findByRole("button", { name: "Book now" }));
+  }
   await user.selectOptions(screen.getByLabelText("Saved payment method"), "payment-1");
   await user.type(screen.getByLabelText("Six-digit TOTP code"), "123456");
   await user.type(screen.getByLabelText("Master-key passphrase (optional)"), masterKey);
@@ -328,6 +330,72 @@ describe("DealReviewPage booking execution", () => {
     expect(queryClient.getQueryState(["deal", "deal-1", "other-watch"])?.isInvalidated).toBe(
       true,
     );
+  });
+
+  it("auto-opens and focuses secure booking after a linked token verifies", async () => {
+    renderDealReview(
+      "/deals/deal-1?watchId=watch-1&approvalToken=linked-token",
+    );
+
+    await screen.findByText(/Opened from a secure notification link\./);
+    const paymentMethod = await screen.findByLabelText("Saved payment method");
+
+    await waitFor(() => expect(paymentMethod).toHaveFocus());
+    expect(screen.getByRole("button", { name: "Hide booking form" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Book now" })).toBeDisabled();
+    expect(travelWatchApi.bookDeal).not.toHaveBeenCalled();
+  });
+
+  it("does not open secure booking when a linked token is invalid", async () => {
+    vi.mocked(travelWatchApi.verifyApprovalToken).mockResolvedValueOnce({
+      valid: false,
+      expiresAt: "",
+    });
+
+    renderDealReview(
+      "/deals/deal-1?watchId=watch-1&approvalToken=invalid-token",
+    );
+
+    await waitFor(() => {
+      expect(travelWatchApi.verifyApprovalToken).toHaveBeenCalledWith({
+        dealId: "deal-1",
+        token: "invalid-token",
+      });
+    });
+    await screen.findByRole("heading", { name: /Tokyo -> Singapore/ });
+    expect(screen.queryByLabelText("Saved payment method")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Book now" })).toBeVisible();
+    expect(travelWatchApi.bookDeal).not.toHaveBeenCalled();
+  });
+
+  it("keeps linked approval locked while a saved attempt needs recovery", async () => {
+    saveStoredBookingAttempt({
+      version: 1,
+      dealId: "deal-1",
+      idempotencyKey: "locked-linked-attempt",
+      paymentMethodId: "payment-1",
+      state: "manual_recovery",
+    });
+    reconcileAttempt.mockResolvedValueOnce(
+      reconciliation({
+        idempotencyKey: "locked-linked-attempt",
+        status: "failed",
+        code: "provider_recovery_required",
+        message: "Provider recovery remains required.",
+        recoveryRequired: true,
+      }),
+    );
+
+    renderDealReview(
+      "/deals/deal-1?watchId=watch-1&approvalToken=linked-token",
+    );
+
+    await screen.findByText(/Provider recovery remains required\./);
+    expect(screen.getByLabelText("Saved payment method")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Book now" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Too pricey" })).toBeDisabled();
+    expect(travelWatchApi.bookDeal).not.toHaveBeenCalled();
+    expect(travelWatchApi.createApprovalToken).not.toHaveBeenCalled();
   });
 
   it("reconciles a lost booking response before reporting success", async () => {

@@ -126,115 +126,158 @@ export function WatchesPage() {
       ) : null}
 
       <div className="stack">
-        {data.watches.map((watch) => (
-          <Surface key={watch.id} className="watch-card">
-            <div className="watch-topline">
-              <div>
-                <div className="badge-row">
-                  <Badge tone={watch.status === "active" ? "value" : "muted"}>
-                    {watch.status}
-                  </Badge>
-                  <Badge tone="luxury">{watch.framing}</Badge>
-                  {watch.badges.map((badge) => (
-                    <Badge key={badge.label} tone={badge.tone}>
-                      {badge.label}
+        {data.watches.map((watch) => {
+          const firstReadinessBlocker = watch.readiness?.blockers[0];
+          const readinessResolutions = watch.readiness?.resolutions ?? [];
+
+          return (
+            <Surface key={watch.id} className="watch-card">
+              <div className="watch-topline">
+                <div>
+                  <div className="badge-row">
+                    <Badge tone={watch.status === "active" ? "value" : "muted"}>
+                      {watch.status}
                     </Badge>
-                  ))}
+                    <Badge tone="luxury">{watch.framing}</Badge>
+                    {watch.badges.map((badge) => (
+                      <Badge key={badge.label} tone={badge.tone}>
+                        {badge.label}
+                      </Badge>
+                    ))}
+                  </div>
+                  <h3>{watch.route}</h3>
+                  <p className="item-copy">
+                    {watch.dates} · {watch.travelers} · {watch.cabin}
+                  </p>
                 </div>
-                <h3>{watch.route}</h3>
+                <div className="watch-best">
+                  <span>Best now</span>
+                  <strong>{watch.bestNow}</strong>
+                </div>
+              </div>
+
+              <p className="watch-insight">{watch.insight}</p>
+              <p className="item-copy">{watch.cadence}</p>
+              {watch.readiness ? (
                 <p className="item-copy">
-                  {watch.dates} · {watch.travelers} · {watch.cabin}
+                  Readiness {watch.readiness.score}/100 · {watch.readiness.label}
                 </p>
-              </div>
-              <div className="watch-best">
-                <span>Best now</span>
-                <strong>{watch.bestNow}</strong>
-              </div>
-            </div>
+              ) : null}
+              {firstReadinessBlocker ? (
+                <div className="notice notice-alert">
+                  <p className="field-label">First readiness blocker</p>
+                  <p className="item-title">{firstReadinessBlocker}</p>
+                  {readinessResolutions.length > 0 ? (
+                    <div className="button-row">
+                      {readinessResolutions.map((resolution) => (
+                        <Button
+                          key={`${resolution.code}-${resolution.path}`}
+                          variant="secondary"
+                          to={resolution.path}
+                        >
+                          {resolution.label}
+                        </Button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {watch.currentDealStatus ? (
+                <p className="item-copy">
+                  Current deal status: {watch.currentDealStatus.replace(/_/g, " ")}
+                </p>
+              ) : null}
 
-            <p className="watch-insight">{watch.insight}</p>
-            <p className="item-copy">{watch.cadence}</p>
-            {watch.readiness ? (
-              <p className="item-copy">
-                Readiness {watch.readiness.score}/100 · {watch.readiness.label}
-                {watch.readiness.blockers[0] ? ` · ${watch.readiness.blockers[0]}` : ""}
-              </p>
-            ) : null}
-            {watch.currentDealStatus ? (
-              <p className="item-copy">Current deal status: {watch.currentDealStatus.replace(/_/g, " ")}</p>
-            ) : null}
-
-            <div className="button-row">
-              {watch.ctaActions.map((action) => {
-                if (action.key === "search_now") {
-                  return (
-                    <Button
-                      key={action.key}
-                      type="button"
-                      onClick={() => searchNowMutation.mutate(watch)}
-                      disabled={searchNowMutation.isPending || !action.enabled}
-                    >
-                      {searchNowMutation.isPending ? "Searching..." : action.label}
-                    </Button>
-                  );
-                }
-                if (action.key === "open_deal" || action.key === "book_now") {
-                  if (!watch.currentDealId) {
-                    return null;
+              <div className="button-row">
+                {watch.ctaActions.map((action) => {
+                  if (action.key === "search_now") {
+                    return (
+                      <Button
+                        key={action.key}
+                        type="button"
+                        onClick={() => searchNowMutation.mutate(watch)}
+                        disabled={searchNowMutation.isPending || !action.enabled}
+                      >
+                        {searchNowMutation.isPending ? "Searching..." : action.label}
+                      </Button>
+                    );
                   }
-                  return (
-                    <Button
-                      key={action.key}
-                      variant={action.tone === "ghost" ? "ghost" : action.tone === "secondary" ? "secondary" : "primary"}
-                      to={`/deals/${watch.currentDealId}?watchId=${watch.id}`}
-                      disabled={!action.enabled}
-                    >
-                      {action.label}
-                    </Button>
-                  );
-                }
-                if (action.key === "pause_watch" || action.key === "resume_watch") {
-                  return (
-                    <Button
-                      key={action.key}
-                      type="button"
-                      variant={action.tone === "ghost" ? "ghost" : action.tone === "secondary" ? "secondary" : "primary"}
-                      onClick={() =>
-                        watchActionMutation.mutate({
-                          watch,
-                          action: action.key === "pause_watch" ? "pause" : "resume",
-                        })
-                      }
-                      disabled={watchActionMutation.isPending || !action.enabled}
-                    >
-                      {action.label}
-                    </Button>
-                  );
-                }
-                if (action.key === "ignore") {
-                  return (
-                    <Button
-                      key={action.key}
-                      type="button"
-                      variant={action.tone === "ghost" ? "ghost" : action.tone === "secondary" ? "secondary" : "primary"}
-                      onClick={() => watchActionMutation.mutate({ watch, action: "ignore" })}
-                      disabled={watchActionMutation.isPending || !action.enabled}
-                    >
-                      {action.label}
-                    </Button>
-                  );
-                }
-                return null;
-              })}
-              <Button variant="secondary" to={`/watches/${watch.id}/edit`}>
-                Edit
-              </Button>
-              <Button variant="ghost" to="/bookings">
-                {watch.status === "paused" ? "Review pause" : "Open bookings"}
-              </Button>
-            </div>
-          </Surface>
-        ))}
+                  if (action.key === "open_deal" || action.key === "book_now") {
+                    if (!watch.currentDealId) {
+                      return null;
+                    }
+                    return (
+                      <Button
+                        key={action.key}
+                        variant={
+                          action.tone === "ghost"
+                            ? "ghost"
+                            : action.tone === "secondary"
+                              ? "secondary"
+                              : "primary"
+                        }
+                        to={`/deals/${watch.currentDealId}?watchId=${watch.id}`}
+                        disabled={!action.enabled}
+                      >
+                        {action.label}
+                      </Button>
+                    );
+                  }
+                  if (action.key === "pause_watch" || action.key === "resume_watch") {
+                    return (
+                      <Button
+                        key={action.key}
+                        type="button"
+                        variant={
+                          action.tone === "ghost"
+                            ? "ghost"
+                            : action.tone === "secondary"
+                              ? "secondary"
+                              : "primary"
+                        }
+                        onClick={() =>
+                          watchActionMutation.mutate({
+                            watch,
+                            action: action.key === "pause_watch" ? "pause" : "resume",
+                          })
+                        }
+                        disabled={watchActionMutation.isPending || !action.enabled}
+                      >
+                        {action.label}
+                      </Button>
+                    );
+                  }
+                  if (action.key === "ignore") {
+                    return (
+                      <Button
+                        key={action.key}
+                        type="button"
+                        variant={
+                          action.tone === "ghost"
+                            ? "ghost"
+                            : action.tone === "secondary"
+                              ? "secondary"
+                              : "primary"
+                        }
+                        onClick={() => watchActionMutation.mutate({ watch, action: "ignore" })}
+                        disabled={watchActionMutation.isPending || !action.enabled}
+                      >
+                        {action.label}
+                      </Button>
+                    );
+                  }
+                  return null;
+                })}
+                <Button variant="secondary" to={`/watches/${watch.id}/edit`}>
+                  Edit
+                </Button>
+                <Button variant="ghost" to="/bookings">
+                  {watch.status === "paused" ? "Review pause" : "Open bookings"}
+                </Button>
+              </div>
+            </Surface>
+          );
+        })}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import type { TravelerProfile } from "@/api/types";
 import { Button, Dial, Surface } from "@/components/ui/primitives";
@@ -16,6 +16,18 @@ function textToList(value: string) {
 
 function listToText(values: string[]) {
   return values.join(", ");
+}
+
+function toggleDisclosureFromKeyboard(event: KeyboardEvent<HTMLElement>) {
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+
+  event.preventDefault();
+  const disclosure = event.currentTarget.parentElement;
+  if (disclosure instanceof HTMLDetailsElement) {
+    disclosure.open = !disclosure.open;
+  }
 }
 
 export function WatchForm({
@@ -458,7 +470,7 @@ export function WatchForm({
       </Surface>
 
       <details className="form-disclosure">
-        <summary>Optional advanced filters</summary>
+        <summary onKeyDown={toggleDisclosureFromKeyboard}>Advanced flight preferences</summary>
         <div className="form-grid form-grid-gap-top">
           <div className="field-stack">
             <label htmlFor="watch-cabin">Cabin</label>
@@ -476,23 +488,6 @@ export function WatchForm({
               <option value="first">First</option>
             </select>
             <p className="helper-copy">Leave blank to let TRAMP optimize cabin quality automatically.</p>
-          </div>
-
-          <div className="field-stack">
-            <label htmlFor="watch-status">Status</label>
-            <select
-              id="watch-status"
-              className="text-input"
-              value={form.status}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, status: event.target.value as WatchDraft["status"] }))
-              }
-              disabled={disabled}
-            >
-              <option value="active">Active</option>
-              <option value="paused">Paused</option>
-              <option value="fulfilled">Fulfilled</option>
-            </select>
           </div>
 
           <div className="field-stack">
@@ -539,18 +534,6 @@ export function WatchForm({
             <p className="helper-copy">Optional safety preference for tight transfers.</p>
           </div>
 
-          <div className="field-stack">
-            <label htmlFor="watch-hotel-rating">Hotel min rating</label>
-            <input
-              id="watch-hotel-rating"
-              className="text-input"
-              value={form.hotelMinRating}
-              onChange={(event) => setForm((current) => ({ ...current, hotelMinRating: event.target.value }))}
-              placeholder="4.5"
-              disabled={disabled}
-            />
-          </div>
-
           <MultiSelectDropdown
             id="watch-airlines"
             label="Preferred airlines"
@@ -576,6 +559,62 @@ export function WatchForm({
             helperText="Leave blank to include all alliances and non-aligned carriers by default."
             otherPlaceholder="Add other alliance"
           />
+
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={form.avoidRedeye}
+              onChange={(event) => setForm((current) => ({ ...current, avoidRedeye: event.target.checked }))}
+              disabled={disabled}
+            />
+            <span>Avoid red-eye flights.</span>
+          </label>
+
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={form.preferRefundable}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, preferRefundable: event.target.checked }))
+              }
+              disabled={disabled}
+            />
+            <span>Prefer refundable inventory when possible.</span>
+          </label>
+        </div>
+      </details>
+
+      <details className="form-disclosure">
+        <summary onKeyDown={toggleDisclosureFromKeyboard}>Pricing and monitoring controls</summary>
+        <div className="form-grid form-grid-gap-top">
+          <div className="field-stack">
+            <label htmlFor="watch-status">Status</label>
+            <select
+              id="watch-status"
+              className="text-input"
+              value={form.status}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, status: event.target.value as WatchDraft["status"] }))
+              }
+              disabled={disabled}
+            >
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+              <option value="fulfilled">Fulfilled</option>
+            </select>
+          </div>
+
+          <div className="field-stack">
+            <label htmlFor="watch-hotel-rating">Hotel min rating</label>
+            <input
+              id="watch-hotel-rating"
+              className="text-input"
+              value={form.hotelMinRating}
+              onChange={(event) => setForm((current) => ({ ...current, hotelMinRating: event.target.value }))}
+              placeholder="4.5"
+              disabled={disabled}
+            />
+          </div>
 
           <div className="field-stack">
             <label htmlFor="watch-notify">Notify via</label>
@@ -651,28 +690,6 @@ export function WatchForm({
               Days before departure when TRAMP treats booking as late-stage and favors acting sooner.
             </p>
           </div>
-
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={form.avoidRedeye}
-              onChange={(event) => setForm((current) => ({ ...current, avoidRedeye: event.target.checked }))}
-              disabled={disabled}
-            />
-            <span>Avoid red-eye flights.</span>
-          </label>
-
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={form.preferRefundable}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, preferRefundable: event.target.checked }))
-              }
-              disabled={disabled}
-            />
-            <span>Prefer refundable inventory when possible.</span>
-          </label>
 
           <label className="checkbox-row">
             <input
