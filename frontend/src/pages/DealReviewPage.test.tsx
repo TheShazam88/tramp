@@ -34,6 +34,22 @@ const awardedApprovalResult: DealApprovalResult = {
   trampStampBalance: 4,
 };
 
+const mockApprovalResult: DealApprovalResult = {
+  ...approvalResult,
+  bookingId: "mock-booking-1",
+  provider: "Mock booking",
+  confirmationNote: "Simulated booking completed.",
+  trampStampsAwarded: 0,
+  trampStampBalance: 0,
+};
+
+const replayApprovalResult: DealApprovalResult = {
+  ...approvalResult,
+  confirmationNote: "Booking confirmed from the saved booking record.",
+  trampStampsAwarded: 0,
+  trampStampBalance: 4,
+};
+
 const baseDeal: DealData = {
   id: "deal-1",
   watchId: "watch-1",
@@ -271,25 +287,20 @@ describe("DealReviewPage booking execution", () => {
     });
   });
 
-  it.each(["mock", "replay"])(
-    "does not animate for a %s response that awards zero stamps",
-    async () => {
-      vi.mocked(travelWatchApi.bookDeal).mockResolvedValueOnce({
-        ...approvalResult,
-        trampStampsAwarded: 0,
-        trampStampBalance: 4,
-      });
-      const { container, user } = renderDealReview();
-      await openAndFillSecureForm(user);
+  it("does not animate for a zero-stamp simulated mock booking", async () => {
+    vi.mocked(travelWatchApi.bookDeal).mockResolvedValueOnce(mockApprovalResult);
+    const { container, user } = renderDealReview();
+    await openAndFillSecureForm(user);
 
-      await user.click(screen.getByRole("button", { name: "Book now" }));
+    await user.click(screen.getByRole("button", { name: "Book now" }));
 
-      expect(await screen.findByRole("status")).toHaveTextContent("Booking confirmed.");
-      expect(screen.queryByText("+1 TRAMP-Stamp")).not.toBeInTheDocument();
-      expect(container.querySelector(".tramp-stamp-overlay")).not.toBeInTheDocument();
-      expect(container.querySelector(".tramp-stamp-flight")).not.toBeInTheDocument();
-    },
-  );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Simulated booking completed.",
+    );
+    expect(screen.queryByText("+1 TRAMP-Stamp")).not.toBeInTheDocument();
+    expect(container.querySelector(".tramp-stamp-overlay")).not.toBeInTheDocument();
+    expect(container.querySelector(".tramp-stamp-flight")).not.toBeInTheDocument();
+  });
 
   it("reuses a verified linked token, consumes its cache, and invalidates every deal variant", async () => {
     const { queryClient, user } = renderDealReview(
@@ -415,7 +426,7 @@ describe("DealReviewPage booking execution", () => {
     );
   });
 
-  it("restores a stored attempt after reload and reconciles its booking", async () => {
+  it("restores an idempotent replay without animating another stamp", async () => {
     saveStoredBookingAttempt({
       version: 1,
       dealId: "deal-1",
@@ -429,21 +440,25 @@ describe("DealReviewPage booking execution", () => {
         status: "booked",
         code: "booked",
         message: "Booking confirmed from the saved booking record.",
-        booking: approvalResult,
+        booking: replayApprovalResult,
       }),
     );
 
-    renderDealReview();
+    const { container } = renderDealReview();
 
-    await screen.findByText("Booking confirmed. Provider: Duffel. Amount: $640. Status: ticketed.");
+    await screen.findByText(
+      "Booking confirmed from the saved booking record. Provider: Duffel. Amount: $640. Status: ticketed.",
+    );
     const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("Booking confirmed.");
+    expect(status).toHaveTextContent("Booking confirmed from the saved booking record.");
     expect(reconcileAttempt).toHaveBeenCalledWith("restored-attempt-key", {
       dealId: "deal-1",
       paymentMethodId: "payment-1",
     });
     expect(sessionStorage.getItem("tramp.booking-attempt.deal-1")).toBeNull();
     expect(travelWatchApi.createApprovalToken).not.toHaveBeenCalled();
+    expect(screen.queryByText("+1 TRAMP-Stamp")).not.toBeInTheDocument();
+    expect(container.querySelector(".tramp-stamp-overlay")).not.toBeInTheDocument();
   });
 
   it("polls an in-progress attempt until the booking completes", async () => {

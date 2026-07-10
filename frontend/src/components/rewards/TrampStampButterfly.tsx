@@ -230,6 +230,7 @@ export function TrampStampButterfly({
   const prefersReducedMotion = usePrefersReducedMotion();
   const onCompleteRef = useRef(onComplete);
   const completedRef = useRef(false);
+  const previousActiveRef = useRef(false);
   onCompleteRef.current = onComplete;
 
   const complete = useCallback(() => {
@@ -241,12 +242,17 @@ export function TrampStampButterfly({
   }, []);
 
   useEffect(() => {
-    if (!active) {
+    const isNewActivation = active && !previousActiveRef.current;
+    previousActiveRef.current = active;
+    if (isNewActivation) {
       completedRef.current = false;
+    }
+  }, [active]);
+
+  useEffect(() => {
+    if (!active || completedRef.current) {
       return;
     }
-
-    completedRef.current = false;
     const timeout = window.setTimeout(
       complete,
       prefersReducedMotion ? REDUCED_MOTION_HOLD_MS : FULL_ANIMATION_MS,
@@ -263,7 +269,7 @@ export function TrampStampButterfly({
 
   return (
     <div
-      className="tramp-stamp-overlay"
+      className="tramp-stamp-overlay tramp-stamp-viewport-safe"
       role="status"
       aria-live="polite"
       aria-atomic="true"

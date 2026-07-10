@@ -1,9 +1,14 @@
 interface TrampBrandProps {
   compact?: boolean;
   className?: string;
+  as?: "div" | "h1";
 }
 
-export function TrampBrand({ compact = false, className = "" }: TrampBrandProps) {
+export function TrampBrand({
+  compact = false,
+  className = "",
+  as: BrandElement = "div",
+}: TrampBrandProps) {
   const classes = [
     "tramp-brand",
     compact ? "tramp-brand-compact" : "",
@@ -13,9 +18,9 @@ export function TrampBrand({ compact = false, className = "" }: TrampBrandProps)
     .join(" ");
 
   return (
-    <div className={classes} aria-label="TRAMP, Travel Amplifier">
+    <BrandElement className={classes}>
       <span className="brand-wordmark">TRAMP</span>
       <span className="brand-expansion">TRAVEL AMPLIFIER</span>
-    </div>
+    </BrandElement>
   );
 }

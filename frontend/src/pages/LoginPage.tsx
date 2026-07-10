@@ -64,7 +64,7 @@ export function LoginPage() {
         <div className="login-stage">
           <Surface className="page-hero login-hero">
             <p className="login-kicker">Luxury travel command</p>
-            <TrampBrand className="login-brand" />
+            <TrampBrand as="h1" className="login-brand" />
             <SectionHeading
               eyebrow="Secure access"
               title="Sign in"

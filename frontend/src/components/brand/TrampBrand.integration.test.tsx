@@ -62,7 +62,9 @@ describe("shared TRAMP branding", () => {
     renderRoute("/watches", authenticatedWorkspace);
 
     const wordmark = await screen.findByText("TRAMP");
-    expect(wordmark.closest(".tramp-brand")).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toContainElement(wordmark);
+    expect(heading).not.toHaveAttribute("aria-label");
     expect(screen.getByText("TRAVEL AMPLIFIER")).toBeVisible();
     expect(screen.getByText("Autonomous travel booking")).toBeVisible();
     expect(screen.getByText("Operator console")).toBeVisible();
@@ -89,7 +91,7 @@ describe("shared TRAMP branding", () => {
     });
 
     const wordmark = await screen.findByText("TRAMP");
-    expect(wordmark.closest(".tramp-brand")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toContainElement(wordmark);
     expect(screen.getByText("TRAVEL AMPLIFIER")).toBeVisible();
   });
 });

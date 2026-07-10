@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -14,19 +14,56 @@ import {
 const globalCss = readFileSync(resolve(process.cwd(), "src/theme/global.css"), "utf8");
 
 function stubReducedMotion(matches: boolean) {
+  return installMotionPreference(matches);
+}
+
+function installMotionPreference(initialMatches: boolean) {
+  let matches = initialMatches;
+  const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  const addEventListener = vi.fn(
+    (eventName: string, listener: (event: MediaQueryListEvent) => void) => {
+      if (eventName === "change") {
+        listeners.add(listener);
+      }
+    },
+  );
+  const removeEventListener = vi.fn(
+    (eventName: string, listener: (event: MediaQueryListEvent) => void) => {
+      if (eventName === "change") {
+        listeners.delete(listener);
+      }
+    },
+  );
+  const mediaQuery = {
+    get matches() {
+      return matches;
+    },
+    media: "(prefers-reduced-motion: reduce)",
+    onchange: null,
+    addEventListener,
+    removeEventListener,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  } as unknown as MediaQueryList;
   vi.stubGlobal(
     "matchMedia",
-    vi.fn().mockImplementation((query: string) => ({
-      matches: query === "(prefers-reduced-motion: reduce)" && matches,
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
+    vi.fn().mockImplementation(() => mediaQuery),
   );
+
+  return {
+    addEventListener,
+    removeEventListener,
+    listenerCount: () => listeners.size,
+    setMatches(nextMatches: boolean) {
+      matches = nextMatches;
+      const event = {
+        matches,
+        media: mediaQuery.media,
+      } as MediaQueryListEvent;
+      listeners.forEach((listener) => listener(event));
+    },
+  };
 }
 
 describe("TrampStampButterfly", () => {
@@ -73,6 +110,78 @@ describe("TrampStampButterfly", () => {
     expect(onComplete).toHaveBeenCalledTimes(2);
   });
 
+  it("does not reset completion when the motion preference changes", () => {
+    vi.useFakeTimers();
+    const motionPreference = installMotionPreference(false);
+    const onComplete = vi.fn();
+    const { rerender } = render(
+      <TrampStampButterfly active balance={4} onComplete={onComplete} />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+      motionPreference.setMatches(true);
+    });
+    expect(screen.getByRole("status")).toHaveAttribute("data-motion", "reduced");
+    act(() => {
+      vi.advanceTimersByTime(1600);
+    });
+    expect(onComplete).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      motionPreference.setMatches(false);
+    });
+    expect(screen.getByRole("status")).toHaveAttribute("data-motion", "animated");
+    act(() => {
+      vi.advanceTimersByTime(5000);
+      fireEvent.animationEnd(screen.getByTestId("tramp-stamp-flight"));
+    });
+    expect(onComplete).toHaveBeenCalledTimes(1);
+
+    rerender(<TrampStampButterfly active={false} balance={4} onComplete={onComplete} />);
+    rerender(<TrampStampButterfly active balance={5} onComplete={onComplete} />);
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(onComplete).toHaveBeenCalledTimes(2);
+  });
+
+  it("calls onComplete once when animation and timer completion race", () => {
+    vi.useFakeTimers();
+    stubReducedMotion(false);
+    const onComplete = vi.fn();
+    render(<TrampStampButterfly active balance={4} onComplete={onComplete} />);
+    const flight = screen.getByTestId("tramp-stamp-flight");
+
+    act(() => {
+      vi.advanceTimersByTime(4999);
+      fireEvent.animationEnd(flight);
+      vi.advanceTimersByTime(1);
+      fireEvent.animationEnd(flight);
+    });
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("cleans up its timer and motion listener on unmount", () => {
+    vi.useFakeTimers();
+    const motionPreference = installMotionPreference(false);
+    const onComplete = vi.fn();
+    const { unmount } = render(
+      <TrampStampButterfly active balance={4} onComplete={onComplete} />,
+    );
+
+    expect(motionPreference.addEventListener).toHaveBeenCalledTimes(1);
+    expect(motionPreference.listenerCount()).toBe(1);
+    unmount();
+    expect(motionPreference.removeEventListener).toHaveBeenCalledTimes(1);
+    expect(motionPreference.listenerCount()).toBe(0);
+    act(() => {
+      vi.runAllTimers();
+    });
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
   it("shows a static final pose for reduced motion before completing", () => {
     vi.useFakeTimers();
     stubReducedMotion(true);
@@ -80,6 +189,7 @@ describe("TrampStampButterfly", () => {
     render(<TrampStampButterfly active balance={1} onComplete={onComplete} />);
 
     expect(screen.getByRole("status")).toHaveAttribute("data-motion", "reduced");
+    expect(screen.getByRole("status")).toHaveClass("tramp-stamp-viewport-safe");
     expect(screen.getByTestId("tramp-stamp-flight")).toHaveClass(
       "tramp-stamp-flight-reduced",
     );
@@ -89,6 +199,24 @@ describe("TrampStampButterfly", () => {
       vi.runAllTimers();
     });
     expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses unique SVG definition IDs across persistent and active instances", () => {
+    stubReducedMotion(true);
+    const { container } = render(
+      <>
+        <TrampStampBadge balance={0} />
+        <TrampStampBadge balance={2} />
+        <TrampStampButterfly active balance={3} onComplete={vi.fn()} />
+      </>,
+    );
+
+    const ids = Array.from(
+      container.querySelectorAll<SVGElement>("[id]"),
+      (element) => element.id,
+    );
+    expect(ids.length).toBeGreaterThan(0);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("keeps zero and nonzero persistent badge artwork completely static", () => {
@@ -149,5 +277,22 @@ describe("TrampStampButterfly", () => {
     expect(body).toMatch(/48%,\s*100%\s*\{\s*transform:\s*rotate\(0\)/);
     expect(copy).toMatch(/0%,\s*76%\s*\{\s*opacity:\s*0/);
     expect(copy).toMatch(/82%,\s*92%\s*\{\s*opacity:\s*1/);
+  });
+
+  it("constrains the overlay by dvh for short landscape and reduced-motion views", () => {
+    const butterflyRule =
+      globalCss.match(/\.tramp-stamp-butterfly\s*\{([^}]*)\}/s)?.[1] ?? "";
+    const shortLandscapeRule = globalCss.slice(
+      globalCss.indexOf(
+        "@media (max-height: 420px) and (orientation: landscape)",
+      ),
+      globalCss.indexOf("@media (prefers-reduced-motion: reduce)"),
+    );
+
+    expect(butterflyRule).toContain("100dvh");
+    expect(butterflyRule).toContain("max-height");
+    expect(shortLandscapeRule).toContain(".tramp-stamp-flight");
+    expect(shortLandscapeRule).toContain(".tramp-stamp-butterfly");
+    expect(shortLandscapeRule).toContain("100dvh");
   });
 });

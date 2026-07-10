@@ -78,6 +78,7 @@ a.button {
   align-items: flex-start;
   gap: 0.18rem;
   width: fit-content;
+  margin: 0;
 }
 
 .app-logo {
@@ -95,12 +96,12 @@ a.button {
   letter-spacing: 0.1em;
   line-height: 0.86;
   text-transform: uppercase;
-  color: var(--luxury);
-  background: linear-gradient(115deg, #8f5d16 5%, #c89a4c 38%, #f1d794 55%, #a66f20 88%);
+  color: #70460d;
+  background: linear-gradient(115deg, #70460d 5%, #805515 38%, #76501a 62%, #694008 88%);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 0 rgba(31, 30, 27, 0.16);
 }
 
 .brand-expansion {
@@ -353,7 +354,7 @@ a.button {
   background:
     radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.92), transparent 38%),
     linear-gradient(135deg, var(--luxury-tint), rgba(255, 255, 255, 0.96));
-  color: color-mix(in srgb, var(--luxury) 78%, var(--ink));
+  color: #68410a;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.92),
     0 6px 18px rgba(166, 111, 32, 0.1);
@@ -388,22 +389,30 @@ a.button {
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 1rem;
-  overflow: hidden;
   pointer-events: none;
+}
+
+.tramp-stamp-viewport-safe {
+  padding: clamp(0.35rem, 2dvh, 1rem);
+  overflow: hidden;
 }
 
 .tramp-stamp-flight {
   display: grid;
   justify-items: center;
   width: min(92vw, 29rem);
+  max-width: 100%;
+  max-height: calc(100dvh - 0.7rem);
+  align-content: center;
   animation: trampStampDescent 5s cubic-bezier(0.22, 0.75, 0.24, 1) both;
   will-change: transform, opacity;
 }
 
 .tramp-stamp-butterfly {
-  width: min(86vw, 24rem);
+  width: min(86vw, 24rem, calc((100dvh - 7rem) * 1.0667));
   height: auto;
+  max-width: 100%;
+  max-height: calc(100dvh - 7rem);
   overflow: visible;
   filter: drop-shadow(0 18px 24px rgba(8, 46, 93, 0.24));
 }
@@ -433,6 +442,7 @@ a.button {
   justify-items: center;
   gap: 0.24rem;
   min-width: min(88vw, 19rem);
+  max-width: 100%;
   margin-top: -0.3rem;
   padding: 0.82rem 1.2rem;
   border: 1px solid color-mix(in srgb, var(--luxury) 58%, var(--line));
@@ -446,7 +456,7 @@ a.button {
 }
 
 .tramp-stamp-award-copy strong {
-  color: color-mix(in srgb, var(--luxury) 78%, var(--ink));
+  color: #68410a;
   font-family: var(--font-display);
   font-size: clamp(1.2rem, 5vw, 1.65rem);
   letter-spacing: 0.02em;
@@ -1347,6 +1357,36 @@ a.button {
   }
 }
 
+@media (max-height: 420px) and (orientation: landscape) {
+  .tramp-stamp-viewport-safe {
+    padding: 0.35rem;
+  }
+
+  .tramp-stamp-flight {
+    width: min(96vw, 32rem);
+    max-height: calc(100dvh - 0.7rem);
+  }
+
+  .tramp-stamp-butterfly {
+    width: min(72vw, 20rem, calc((100dvh - 5.5rem) * 1.0667));
+    max-height: calc(100dvh - 5.5rem);
+  }
+
+  .tramp-stamp-award-copy {
+    gap: 0.1rem;
+    margin-top: -0.45rem;
+    padding: 0.45rem 0.85rem;
+  }
+
+  .tramp-stamp-award-copy strong {
+    font-size: clamp(1rem, 4dvh, 1.25rem);
+  }
+
+  .tramp-stamp-award-copy span {
+    font-size: 0.62rem;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tramp-stamp-flight,
   .tramp-stamp-wing,
@@ -1355,6 +1395,44 @@ a.button {
     opacity: 1;
     transform: none;
     animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .brand-wordmark {
+    color: CanvasText;
+    background: none;
+    -webkit-text-fill-color: CanvasText;
+    text-shadow: none;
+    forced-color-adjust: auto;
+  }
+
+  .brand-expansion,
+  .brand-tagline {
+    color: CanvasText;
+  }
+
+  .tramp-stamp-badge {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+
+  .tramp-stamp-badge-mark {
+    display: none;
+  }
+
+  .tramp-stamp-award-copy {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
+
+  .tramp-stamp-award-copy strong,
+  .tramp-stamp-award-copy span {
+    color: CanvasText;
   }
 }
 

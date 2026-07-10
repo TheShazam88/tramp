@@ -59,7 +59,7 @@ export function AppLayout() {
         <div className="topbar-brand">
           <div className="topbar-brand-copy">
             <p className="eyebrow">Autonomous travel booking</p>
-            <TrampBrand compact />
+            <TrampBrand compact as="h1" />
             <p className="brand-tagline">
               {isOnboarding ? "Security and onboarding" : "Operator console"}
             </p>
