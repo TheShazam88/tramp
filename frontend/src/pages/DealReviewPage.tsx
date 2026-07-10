@@ -278,6 +278,23 @@ export function DealReviewPage() {
         setBookingFeedback({ kind: "status", message: conflictAttempt.message ?? "" });
         return;
       }
+      if (result.recoveryRequired) {
+        const recoveryAttempt: StoredBookingAttempt = {
+          ...storedAttempt,
+          state: "manual_recovery",
+          code: result.code,
+          message: result.message,
+        };
+        persistLogicalAttempt(recoveryAttempt);
+        setAttemptAllowsRetry(false);
+        setAutomaticPollScheduled(false);
+        setShowApprovalForm(true);
+        setBookingFeedback({
+          kind: "status",
+          message: `${result.message} Recovery remains locked until explicit provider reconciliation is available.`,
+        });
+        return;
+      }
       if (result.booking) {
         await completeBookingSuccess(result.booking);
         return;

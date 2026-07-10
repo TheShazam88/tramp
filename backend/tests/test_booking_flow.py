@@ -452,7 +452,8 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
         assert attempt.booking_id == booking.id
         assert attempt.provider == provider_result.provider
         assert attempt.response_payload_json == provider_payload
-        assert db.commits == 1
+        assert attempt.recovery_required is False
+        assert db.commits == 2
         assert real_award is not None
         return real_award(**kwargs)
 
@@ -494,8 +495,8 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
     assert replay.idempotent_replay is True
     assert award_calls == 1
     assert received_idempotency_keys == ["live-booking-idempotency-key"]
-    assert db.commits == 2
-    assert balance_commit_counts == [1, 2]
+    assert db.commits == 3
+    assert balance_commit_counts == [2, 3]
 
 
 def test_list_bookings_reuses_one_stamp_balance(monkeypatch: pytest.MonkeyPatch) -> None:

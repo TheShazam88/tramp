@@ -443,6 +443,7 @@ interface BookingAttemptReconciliationRaw {
   code?: string | null;
   message?: string | null;
   safe_to_retry?: boolean | null;
+  recovery_required?: boolean | null;
   booking?: BookingRaw | null;
   started_at?: string | null;
   finished_at?: string | null;
@@ -2397,6 +2398,7 @@ export const travelWatchApi = {
           code: "booked",
           message: "Booking confirmed from the saved booking record.",
           safeToRetry: false,
+          recoveryRequired: false,
           booking: {
             dealId: attempt.dealId,
             bookingId: attempt.bookingId,
@@ -2417,6 +2419,7 @@ export const travelWatchApi = {
         code: "mock_interrupted",
         message: "The simulated booking was interrupted. Start a new booking attempt.",
         safeToRetry: true,
+        recoveryRequired: false,
         booking: null,
         startedAt: new Date().toISOString(),
       });
@@ -2436,6 +2439,7 @@ export const travelWatchApi = {
         coerceString(response.message) ||
         "This booking attempt needs reconciliation before another booking can start.",
       safeToRetry: response.safe_to_retry === true,
+      recoveryRequired: response.recovery_required === true,
       booking: response.booking
         ? mapBookingToApprovalResult(
             response.booking,

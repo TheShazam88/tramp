@@ -694,7 +694,9 @@ class BookingAttempt(UUIDPrimaryKeyMixin, Base):
             "ux_booking_attempts_unresolved_deal",
             "deal_id",
             unique=True,
-            postgresql_where=text("status IN ('STARTED', 'REVALIDATED')"),
+            postgresql_where=text(
+                "status IN ('STARTED', 'REVALIDATED') OR recovery_required IS TRUE"
+            ),
         ),
     )
 
@@ -720,6 +722,11 @@ class BookingAttempt(UUIDPrimaryKeyMixin, Base):
         Enum(BookingAttemptStatus, name="booking_attempt_status"),
         nullable=False,
         default=BookingAttemptStatus.STARTED,
+    )
+    recovery_required: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
     )
     provider: Mapped[str | None] = mapped_column(String(64))
     provider_booking_ref: Mapped[str | None] = mapped_column(String(255))

@@ -435,7 +435,7 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _enum_labels(database_url, "integration_environment") == ["TEST", "LIVE"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260710_0006"
+    assert _revision(database_url) == "20260710_0007"
     assert "tramp_stamp_ledger" in _table_names(database_url)
     assert "PENDING_TICKETING" not in _enum_labels(
         database_url, "booking_attempt_status"
@@ -443,6 +443,7 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert "provider_booking_ref" in _column_names(
         database_url, "booking_attempts"
     )
+    assert "recovery_required" in _column_names(database_url, "booking_attempts")
     assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
         database_url,
         "booking_attempts",
@@ -465,7 +466,7 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _table_names(database_url) == ["alembic_version"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260710_0006"
+    assert _revision(database_url) == "20260710_0007"
 
 
 def test_0005_rejects_duplicate_attempt_claims_without_data_loss() -> None:
@@ -580,7 +581,7 @@ def test_0005_cleans_interrupted_concurrent_index_before_retry() -> None:
 
     _run_alembic(database_url, "upgrade", "head")
 
-    assert _revision(database_url) == "20260710_0006"
+    assert _revision(database_url) == "20260710_0007"
     assert temporary_index not in _index_names(database_url, "booking_attempts")
     assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
         database_url,
@@ -635,6 +636,70 @@ def test_0006_rejects_duplicate_unresolved_deal_claims_without_data_loss() -> No
                     "SELECT count(*) FROM booking_attempts "
                     "WHERE deal_id = :deal_id "
                     "AND status IN ('STARTED', 'REVALIDATED')"
+                ),
+                {"deal_id": rows["deal"]},
+            ) == 2
+    finally:
+        engine.dispose()
+
+
+def test_0007_rejects_duplicate_recovery_claims_without_data_loss() -> None:
+    database_url = _migration_database_url()
+    _reset_database(database_url)
+    _run_alembic(database_url, "upgrade", "20260710_0006")
+    rows = _seed_operational_rows(database_url)
+    duplicate_id = uuid4()
+    provider_failure = {
+        "conflict_code": "provider_failed",
+        "safe_to_retry": False,
+    }
+
+    engine = create_engine(database_url)
+    try:
+        with Session(engine) as db:
+            db.execute(
+                BookingAttempt.__table__.update()
+                .where(BookingAttempt.id == rows["attempt"])
+                .values(
+                    status=BookingAttemptStatus.FAILED,
+                    response_payload_json=provider_failure,
+                    finished_at=datetime.now(UTC),
+                )
+            )
+            db.execute(
+                BookingAttempt.__table__.insert().values(
+                    id=duplicate_id,
+                    deal_id=rows["deal"],
+                    booking_id=None,
+                    watch_id=rows["watch"],
+                    idempotency_key=f"recovery-key-{duplicate_id}",
+                    status=BookingAttemptStatus.FAILED,
+                    response_payload_json=provider_failure,
+                    started_at=datetime.now(UTC),
+                    finished_at=datetime.now(UTC),
+                )
+            )
+            db.commit()
+    finally:
+        engine.dispose()
+
+    result = _run_alembic(database_url, "upgrade", "head", check=False)
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0
+    assert "Duplicate active booking recovery attempts prevent migration" in output
+    assert str(rows["deal"]) in output
+    assert _revision(database_url) == "20260710_0006"
+    assert "recovery_required" not in _column_names(database_url, "booking_attempts")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            assert connection.scalar(
+                text(
+                    "SELECT count(*) FROM booking_attempts "
+                    "WHERE deal_id = :deal_id "
+                    "AND response_payload_json->>'conflict_code' = 'provider_failed'"
                 ),
                 {"deal_id": rows["deal"]},
             ) == 2

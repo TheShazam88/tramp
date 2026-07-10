@@ -127,6 +127,7 @@ class BookingAttemptReconciliationResponse(BaseModel):
     code: str
     message: str
     safe_to_retry: bool
+    recovery_required: bool
     booking: BookingResponse | None = None
     started_at: datetime
     finished_at: datetime | None = None

@@ -50,6 +50,7 @@ describe("travelWatchApi booking execution", () => {
       code: "booked",
       message: "Booking confirmed from the saved booking record.",
       safe_to_retry: false,
+      recovery_required: true,
       started_at: "2030-01-01T00:00:00Z",
       finished_at: "2030-01-01T00:01:00Z",
       booking: {
@@ -75,6 +76,7 @@ describe("travelWatchApi booking execution", () => {
         paymentMethodId: "payment-1",
         code: "booked",
         safeToRetry: false,
+        recoveryRequired: true,
         booking: expect.objectContaining({
           bookingId: "booking-1",
           trampStampsAwarded: 1,

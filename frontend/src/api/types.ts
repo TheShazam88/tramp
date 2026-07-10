@@ -210,6 +210,7 @@ export interface BookingAttemptReconciliation {
   code: string;
   message: string;
   safeToRetry: boolean;
+  recoveryRequired: boolean;
   booking: DealApprovalResult | null;
   startedAt: string;
   finishedAt?: string;

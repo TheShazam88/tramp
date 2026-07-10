@@ -94,12 +94,14 @@ def test_reconciliation_schema_exposes_only_sanitized_attempt_state() -> None:
         code="provider_failed",
         message="The provider could not confirm this booking. Manual recovery is required.",
         safe_to_retry=False,
+        recovery_required=True,
         booking=None,
         started_at=datetime.now(UTC),
         finished_at=datetime.now(UTC),
     )
 
     assert response.code == "provider_failed"
+    assert response.recovery_required is True
     assert "provider-secret" not in response.model_dump_json()
 
 
@@ -115,6 +117,7 @@ def test_reconciliation_route_uses_authenticated_user_without_approval_token(
         code="attempt_in_progress",
         message="Booking attempt is processing.",
         safe_to_retry=False,
+        recovery_required=False,
         booking=None,
         started_at=datetime.now(UTC),
     )
@@ -151,6 +154,7 @@ def test_reconciliation_is_user_scoped_and_hides_provider_error(
         status=BookingAttemptStatus.FAILED,
     )
     attempt.error_text = "provider-secret: card gateway timeout"
+    attempt.recovery_required = True
     attempt.response_payload_json = {
         "conflict_code": "provider_failed",
         "safe_to_retry": False,
@@ -165,6 +169,7 @@ def test_reconciliation_is_user_scoped_and_hides_provider_error(
 
     assert response.code == "provider_failed"
     assert response.safe_to_retry is False
+    assert response.recovery_required is True
     assert "provider-secret" not in response.message
 
     other_user = User(id=uuid4(), email="other@example.com", password_hash="hashed")
@@ -246,16 +251,34 @@ def test_provider_failure_is_logged_but_client_message_is_sanitized(
             ),
             conflict_code="provider_failed",
             safe_to_retry=False,
+            recovery_required=True,
         )
 
     assert raw_error in caplog.text
     assert raw_error not in str(exc_info.value)
     assert exc_info.value.code == "provider_failed"
     assert attempt.error_text == raw_error
+    assert attempt.recovery_required is True
     assert attempt.response_payload_json == {
         "conflict_code": "provider_failed",
         "safe_to_retry": False,
     }
+
+
+def test_definitive_pre_provider_failure_does_not_require_recovery() -> None:
+    attempt = _attempt(status=BookingAttemptStatus.STARTED)
+    db = _RecordingSession()
+
+    with pytest.raises(ConflictError):
+        booking_service._commit_failed_booking_attempt(
+            db=db,
+            booking_attempt=attempt,
+            error_text="Deal was already booked before provider execution.",
+            client_message="This deal has already been booked.",
+            conflict_code="already_booked",
+        )
+
+    assert attempt.recovery_required is False
 
 
 def test_booking_response_never_exposes_stored_provider_error(

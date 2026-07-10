@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import NoReturn
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -187,6 +187,7 @@ def approve_and_book(
             )
         booking_attempt.booking_id = existing_by_key.id
         booking_attempt.status = BookingAttemptStatus.BOOKED
+        booking_attempt.recovery_required = False
         booking_attempt.finished_at = datetime.now(UTC)
         db.add(booking_attempt)
         db.commit()
@@ -218,7 +219,10 @@ def approve_and_book(
         )
 
     booking_attempt.status = BookingAttemptStatus.REVALIDATED
+    booking_attempt.recovery_required = True
     db.add(booking_attempt)
+    db.commit()
+    deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
 
     booked_at = datetime.now(UTC)
     try:
@@ -240,6 +244,7 @@ def approve_and_book(
             error_text=str(exc),
             client_message=PROVIDER_FAILED_MESSAGE,
             conflict_code="provider_failed",
+            recovery_required=True,
         )
 
     booking_attempt.provider = provider_result.provider
@@ -259,6 +264,7 @@ def approve_and_book(
                 "the booking was not finalized."
             ),
             conflict_code="provider_failed",
+            recovery_required=True,
         )
 
     if not mock_data_enabled and (
@@ -267,6 +273,7 @@ def approve_and_book(
         or payload_is_simulated(provider_result.provider_payload)
     ):
         booking_attempt.status = BookingAttemptStatus.FAILED
+        booking_attempt.recovery_required = True
         booking_attempt.error_text = (
             "Live booking is unavailable while mock data is disabled."
         )
@@ -290,6 +297,7 @@ def approve_and_book(
             error_text=f"Unsupported provider booking status: {provider_result.status!r}.",
             client_message="Booking provider returned an unsupported status.",
             conflict_code="provider_failed",
+            recovery_required=True,
         )
 
     if provider_status == BookingStatus.FAILED:
@@ -300,6 +308,7 @@ def approve_and_book(
             error_text=error_text,
             client_message=PROVIDER_FAILED_MESSAGE,
             conflict_code="provider_failed",
+            recovery_required=True,
         )
 
     if provider_status == BookingStatus.PENDING_TICKETING:
@@ -314,6 +323,7 @@ def approve_and_book(
                 PENDING_TICKETING_MESSAGE
             ),
             conflict_code="pending_ticketing",
+            recovery_required=True,
         )
 
     if provider_status not in COMPLETED_BOOKING_STATUSES:
@@ -323,6 +333,7 @@ def approve_and_book(
             error_text=f"Unsupported provider booking status: {provider_status.value}.",
             client_message="Booking provider returned an unsupported status.",
             conflict_code="provider_failed",
+            recovery_required=True,
         )
 
     if provider_result.error_text:
@@ -352,6 +363,7 @@ def approve_and_book(
     db.flush()
     booking_attempt.booking_id = booking.id
     booking_attempt.status = BookingAttemptStatus.BOOKED
+    booking_attempt.recovery_required = False
 
     db.add(
         SpendLedger(
@@ -545,6 +557,7 @@ def reconcile_booking_attempt(
         code=code,
         message=message,
         safe_to_retry=safe_to_retry,
+        recovery_required=attempt.recovery_required,
         booking=(
             serialize_booking(db=db, user=user, booking=booking)
             if booking is not None
@@ -765,11 +778,14 @@ def _get_unresolved_attempt_for_deal(
         select(BookingAttempt)
         .where(
             BookingAttempt.deal_id == deal_id,
-            BookingAttempt.status.in_(
-                {
-                    BookingAttemptStatus.STARTED,
-                    BookingAttemptStatus.REVALIDATED,
-                }
+            or_(
+                BookingAttempt.status.in_(
+                    (
+                        BookingAttemptStatus.STARTED,
+                        BookingAttemptStatus.REVALIDATED,
+                    )
+                ),
+                BookingAttempt.recovery_required.is_(True),
             ),
         )
         .order_by(BookingAttempt.started_at.asc(), BookingAttempt.id.asc())
@@ -960,7 +976,11 @@ def _attempt_conflict_state(
     code = str(payload.get("conflict_code") or "conflict")
     if code not in ATTEMPT_MESSAGES:
         code = "conflict"
-    safe_to_retry = bool(payload.get("safe_to_retry", False)) and code == "deal_expired"
+    safe_to_retry = (
+        bool(payload.get("safe_to_retry", False))
+        and code == "deal_expired"
+        and not attempt.recovery_required
+    )
     return code, ATTEMPT_MESSAGES[code], safe_to_retry
 
 
@@ -984,8 +1004,10 @@ def _commit_failed_booking_attempt(
     client_message: str,
     conflict_code: str = "conflict",
     safe_to_retry: bool = False,
+    recovery_required: bool = False,
 ) -> NoReturn:
     booking_attempt.status = BookingAttemptStatus.FAILED
+    booking_attempt.recovery_required = recovery_required
     booking_attempt.error_text = error_text
     booking_attempt.response_payload_json = {
         **(booking_attempt.response_payload_json or {}),

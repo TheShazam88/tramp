@@ -132,6 +132,7 @@ function reconciliation(
     code: "attempt_in_progress",
     message: "This booking attempt is still processing.",
     safeToRetry: false,
+    recoveryRequired: false,
     booking: null,
     startedAt: "2030-01-01T00:00:00Z",
     ...overrides,
@@ -519,7 +520,9 @@ describe("DealReviewPage booking execution", () => {
         },
       }),
     );
-    reconcileAttempt.mockResolvedValueOnce(reconciliation());
+    reconcileAttempt.mockResolvedValueOnce(
+      reconciliation({ recoveryRequired: true }),
+    );
     const { router, user } = renderDealReview();
     await openAndFillSecureForm(user);
 

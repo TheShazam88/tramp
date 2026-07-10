@@ -722,6 +722,7 @@ def test_failed_provider_status_persists_only_failed_attempt(
         "safe_to_retry": False,
     }
     assert attempts[0].error_text == "provider declined booking"
+    assert attempts[0].recovery_required is True
     assert db.scalar(
         select(func.count()).select_from(Booking).where(Booking.deal_id == deal.id)
     ) == 0
@@ -740,6 +741,16 @@ def test_failed_provider_status_persists_only_failed_attempt(
     ) == 0
     assert db.get(Deal, deal.id).status == DealStatus.PROPOSED
     assert db.get(TripWatch, watch.id).status == TripWatchStatus.ACTIVE
+    second_result = _approve_booking_in_session(
+        db.get_bind(),
+        user_id=user.id,
+        deal_id=deal.id,
+        payment_method_id=payment_method.id,
+        idempotency_key=f"failed-provider-second-{uuid4()}",
+    )
+    assert isinstance(second_result, ConflictError)
+    assert second_result.code == "attempt_in_progress"
+    assert connector.call_count == 1
 
 
 def test_missing_execution_provenance_is_rejected(
@@ -781,6 +792,7 @@ def test_missing_execution_provenance_is_rejected(
     )
     assert attempt is not None
     assert attempt.status == BookingAttemptStatus.FAILED
+    assert attempt.recovery_required is True
     assert attempt.provider_booking_ref == result.provider_booking_ref
     assert attempt.response_payload_json == {
         **result.provider_payload,
@@ -839,6 +851,7 @@ def test_pending_provider_status_is_rejected_without_success_side_effects(
     )
     assert attempt is not None
     assert attempt.status == BookingAttemptStatus.FAILED
+    assert attempt.recovery_required is True
     assert attempt.booking_id is None
     assert attempt.provider_booking_ref == connector.result.provider_booking_ref
     assert attempt.response_payload_json == {
@@ -992,6 +1005,7 @@ def test_retry_after_crash_does_not_reexecute_provider(
     )
     assert attempt is not None
     assert attempt.status == BookingAttemptStatus.STARTED
+    assert attempt.recovery_required is False
     assert db.scalar(
         select(func.count()).select_from(Booking).where(Booking.deal_id == deal.id)
     ) == 0
@@ -1059,7 +1073,8 @@ def test_retry_after_post_provider_crash_does_not_reexecute_provider(
             )
         )
         assert attempt is not None
-        assert attempt.status == BookingAttemptStatus.STARTED
+        assert attempt.status == BookingAttemptStatus.REVALIDATED
+        assert attempt.recovery_required is True
         assert verify_db.scalar(
             select(func.count())
             .select_from(Booking)
@@ -1229,7 +1244,7 @@ def test_calendar_and_notification_use_preresolved_dependencies_after_claim(
         result = future.result()
 
     assert not isinstance(result, Exception)
-    assert commit_stages == ["claim", "commit"]
+    assert commit_stages == ["claim", "commit", "commit"]
     assert connector.received_idempotency_keys == [idempotency_key]
     with Session(postgres_engine) as verify_db:
         booking = verify_db.scalar(
