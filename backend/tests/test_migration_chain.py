@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -519,15 +520,57 @@ def test_0005_cleans_interrupted_concurrent_index_before_retry() -> None:
     database_url = _migration_database_url()
     _reset_database(database_url)
     _run_alembic(database_url, "upgrade", "20260710_0004")
-    _seed_operational_rows(database_url)
+    rows = _seed_operational_rows(database_url)
     temporary_index = "ux_booking_attempts_idempotency_key_claim"
+    duplicate_id = uuid4()
+    duplicate_key = f"migration-{rows['attempt']}"
+
+    engine = create_engine(database_url)
+    try:
+        with Session(engine) as db:
+            db.execute(
+                BookingAttempt.__table__.insert().values(
+                    id=duplicate_id,
+                    deal_id=rows["deal"],
+                    booking_id=rows["booking"],
+                    watch_id=rows["watch"],
+                    idempotency_key=duplicate_key,
+                    status=BookingAttemptStatus.STARTED,
+                    started_at=datetime.now(UTC),
+                )
+            )
+            db.commit()
+    finally:
+        engine.dispose()
 
     engine = create_engine(database_url, isolation_level="AUTOCOMMIT")
     try:
         with engine.connect() as connection:
-            connection.exec_driver_sql(
-                f"CREATE UNIQUE INDEX {temporary_index} "
-                "ON booking_attempts (idempotency_key)"
+            with pytest.raises(IntegrityError):
+                connection.exec_driver_sql(
+                    f"CREATE UNIQUE INDEX CONCURRENTLY {temporary_index} "
+                    "ON booking_attempts (idempotency_key)"
+                )
+    finally:
+        engine.dispose()
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            assert connection.scalar(
+                text(
+                    """
+                    SELECT idx.indisvalid
+                    FROM pg_index AS idx
+                    JOIN pg_class AS relation ON relation.oid = idx.indexrelid
+                    WHERE relation.relname = :index_name
+                    """
+                ),
+                {"index_name": temporary_index},
+            ) is False
+            connection.execute(
+                text("DELETE FROM booking_attempts WHERE id = :duplicate_id"),
+                {"duplicate_id": duplicate_id},
             )
     finally:
         engine.dispose()

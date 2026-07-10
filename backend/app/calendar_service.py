@@ -4,14 +4,25 @@ from datetime import UTC, datetime, time
 
 from app.db.models import Booking, Deal, TripWatch
 from app.integrations.service import get_calendar_connector
+from app.integrations.types import CalendarConnector
 
 
-def push_booking_to_calendar(*, db, booking: Booking, deal: Deal, watch: TripWatch) -> dict[str, object]:
-    connector = get_calendar_connector(db=db, allow_disabled=True)
+def push_booking_to_calendar(
+    *,
+    db,
+    booking: Booking,
+    deal: Deal,
+    watch: TripWatch,
+    connector: CalendarConnector | None = None,
+) -> dict[str, object]:
+    resolved_connector = connector or get_calendar_connector(
+        db=db,
+        allow_disabled=True,
+    )
     starts_at = _watch_start_datetime(watch)
     ends_at = _watch_end_datetime(watch)
     route = " -> ".join((watch.origin_iatas or []) + (watch.destination_iatas or []))
-    result = connector.create_event(
+    result = resolved_connector.create_event(
         title=f"TRAMP trip · {route or deal.kind}",
         starts_at=starts_at,
         ends_at=ends_at,

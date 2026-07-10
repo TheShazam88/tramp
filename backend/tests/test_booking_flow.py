@@ -393,6 +393,16 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
         "get_booking_connector",
         lambda *, db: connector,
     )
+    monkeypatch.setattr(
+        booking_service,
+        "get_calendar_connector",
+        lambda *, db, allow_disabled: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "get_integration",
+        lambda *, db, key: SimpleNamespace(credentials={}),
+    )
     monkeypatch.setattr(booking_service, "queue_notification", lambda **_kwargs: [])
     monkeypatch.setattr(
         booking_service,

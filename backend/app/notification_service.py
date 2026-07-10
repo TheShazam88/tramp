@@ -18,6 +18,7 @@ from app.db.models import (
     UserPreference,
 )
 from app.integrations.service import get_integration, get_notification_connector
+from app.integrations.types import ResolvedIntegrationConfig
 
 
 def queue_notification(
@@ -32,13 +33,23 @@ def queue_notification(
     disruption: Disruption | None = None,
     channel: NotificationChannel = NotificationChannel.INHERIT,
     force: bool = False,
+    integration: ResolvedIntegrationConfig | None = None,
 ) -> list[NotificationDelivery]:
-    destinations = _resolve_destinations(db=db, user=user, requested_channel=channel)
+    resolved_integration = integration or get_integration(
+        db=db,
+        key="notifications",
+    )
+    destinations = _resolve_destinations(
+        user=user,
+        requested_channel=channel,
+        integration=resolved_integration,
+    )
+    integration_mode = _notification_mode(integration=resolved_integration)
     created: list[NotificationDelivery] = []
     for destination_channel, destination_value in destinations:
         transport = _resolve_transport(
             destination_channel=destination_channel,
-            integration_mode=_notification_mode(db=db),
+            integration_mode=integration_mode,
         )
         delivery = NotificationDelivery(
             user_id=user.id,
@@ -129,9 +140,9 @@ def list_notification_deliveries_for_booking(
 
 def _resolve_destinations(
     *,
-    db: Session,
     user: User,
     requested_channel: NotificationChannel,
+    integration: ResolvedIntegrationConfig,
 ) -> list[tuple[NotificationChannel, str]]:
     effective_channel = (
         user.default_notify_channel
@@ -144,12 +155,7 @@ def _resolve_destinations(
     if effective_channel in {NotificationChannel.TELEGRAM, NotificationChannel.BOTH}:
         telegram_destination = (
             user.telegram_chat_id
-            or str(
-                get_integration(db=db, key="notifications").credentials.get(
-                    "telegram_default_chat_id"
-                )
-                or ""
-            ).strip()
+            or str(integration.credentials.get("telegram_default_chat_id") or "").strip()
         )
         if telegram_destination:
             destinations.append((NotificationChannel.TELEGRAM, telegram_destination))
@@ -168,8 +174,7 @@ def _resolve_transport(
     return NotificationTransport.LOG_ONLY
 
 
-def _notification_mode(*, db: Session) -> str:
-    integration = get_integration(db=db, key="notifications")
+def _notification_mode(*, integration: ResolvedIntegrationConfig) -> str:
     return str(integration.credentials.get("delivery_mode") or "log_only").strip().lower()
 
 

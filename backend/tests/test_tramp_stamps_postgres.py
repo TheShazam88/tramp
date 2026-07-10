@@ -277,6 +277,18 @@ class StaticBookingConnector:
         return self.result
 
 
+class CommitTrackingSession(Session):
+    def __init__(self, *args, commit_stages: list[str], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.commit_stages = commit_stages
+
+    def commit(self) -> None:
+        has_attempt = any(isinstance(value, BookingAttempt) for value in self.new)
+        stage = "claim" if has_attempt else "commit"
+        self.commit_stages.append(stage)
+        super().commit()
+
+
 def _patch_booking_runtime(
     monkeypatch: pytest.MonkeyPatch,
     connector: StaticBookingConnector,
@@ -732,6 +744,81 @@ def test_retry_after_crash_does_not_reexecute_provider(
     ) == 0
 
 
+def test_retry_after_post_provider_crash_does_not_reexecute_provider(
+    db: Session,
+    postgres_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, _watch, deal, payment_method = _add_live_booking_request(
+        db,
+        label="post-provider-crash",
+    )
+    db.commit()
+    connector = StaticBookingConnector(_provider_result(BookingStatus.TICKETED))
+    _patch_booking_runtime(monkeypatch, connector)
+    monkeypatch.setattr(
+        booking_service,
+        "push_booking_to_calendar",
+        lambda **_kwargs: {"transport": "test"},
+    )
+
+    def crash_before_final_commit(**_kwargs):
+        raise RuntimeError("simulated crash after provider success")
+
+    monkeypatch.setattr(
+        booking_service,
+        "queue_notification",
+        crash_before_final_commit,
+    )
+    idempotency_key = f"post-provider-crash-{uuid4()}"
+
+    with pytest.raises(RuntimeError, match="after provider success"):
+        with Session(postgres_engine, expire_on_commit=False) as crash_db:
+            crash_user = crash_db.get(User, user.id)
+            assert crash_user is not None
+            booking_service.approve_and_book(
+                db=crash_db,
+                user=crash_user,
+                deal_id=deal.id,
+                approval_token="approval-token",
+                totp_code="000000",
+                master_key_passphrase="unused",
+                payment_method_id=payment_method.id,
+                idempotency_key=idempotency_key,
+                token_service=SimpleNamespace(),
+            )
+
+    retry_result = _approve_booking_in_session(
+        postgres_engine,
+        user_id=user.id,
+        deal_id=deal.id,
+        payment_method_id=payment_method.id,
+        idempotency_key=idempotency_key,
+    )
+    assert isinstance(retry_result, ConflictError)
+    assert "recovery" in str(retry_result)
+    assert connector.call_count == 1
+    assert connector.received_idempotency_keys == [idempotency_key]
+    with Session(postgres_engine) as verify_db:
+        attempt = verify_db.scalar(
+            select(BookingAttempt).where(
+                BookingAttempt.idempotency_key == idempotency_key
+            )
+        )
+        assert attempt is not None
+        assert attempt.status == BookingAttemptStatus.STARTED
+        assert verify_db.scalar(
+            select(func.count())
+            .select_from(Booking)
+            .where(Booking.deal_id == deal.id)
+        ) == 0
+        assert verify_db.scalar(
+            select(func.count())
+            .select_from(TrampStampLedger)
+            .where(TrampStampLedger.user_id == user.id)
+        ) == 0
+
+
 def test_legacy_connector_backfill_commits_before_claim_and_lock(
     db: Session,
     postgres_engine: Engine,
@@ -828,6 +915,87 @@ def test_legacy_connector_backfill_commits_before_claim_and_lock(
             .select_from(Booking)
             .where(Booking.deal_id == deal.id)
         ) == 1
+
+
+def test_calendar_and_notification_use_preresolved_dependencies_after_claim(
+    db: Session,
+    postgres_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, _watch, deal, payment_method = _add_live_booking_request(
+        db,
+        label="post-claim-resolution",
+    )
+    db.commit()
+    connector = StaticBookingConnector(
+        _provider_result(BookingStatus.TICKETED),
+        blocking=True,
+    )
+    _patch_booking_runtime(monkeypatch, connector)
+    commit_stages: list[str] = []
+    idempotency_key = f"post-claim-resolution-{uuid4()}"
+
+    def execute_booking() -> object:
+        with CommitTrackingSession(
+            bind=postgres_engine,
+            expire_on_commit=False,
+            commit_stages=commit_stages,
+        ) as worker_db:
+            worker_user = worker_db.get(User, user.id)
+            assert worker_user is not None
+            return booking_service.approve_and_book(
+                db=worker_db,
+                user=worker_user,
+                deal_id=deal.id,
+                approval_token="approval-token",
+                totp_code="000000",
+                master_key_passphrase="unused",
+                payment_method_id=payment_method.id,
+                idempotency_key=idempotency_key,
+                token_service=SimpleNamespace(),
+            )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(execute_booking)
+        assert connector.provider_started.wait(timeout=10)
+        with Session(postgres_engine) as config_db:
+            config_db.add(
+                PlatformIntegration(
+                    key="flights_duffel",
+                    encrypted_credentials=integrations_service._encrypt_credentials(
+                        "flights_duffel",
+                        {"access_token": "late-legacy-token"},
+                    ),
+                    environment=IntegrationEnvironment.LIVE,
+                    enabled=True,
+                    updated_by=user.id,
+                )
+            )
+            config_db.commit()
+        connector.release_provider.set()
+        result = future.result()
+
+    assert not isinstance(result, Exception)
+    assert commit_stages == ["claim", "commit"]
+    assert connector.received_idempotency_keys == [idempotency_key]
+    with Session(postgres_engine) as verify_db:
+        booking = verify_db.scalar(
+            select(Booking).where(Booking.deal_id == deal.id)
+        )
+        assert booking is not None
+        assert booking.calendar_event_id is not None
+        assert verify_db.scalar(
+            select(func.count())
+            .select_from(NotificationDelivery)
+            .where(NotificationDelivery.booking_id == booking.id)
+        ) == 1
+        late_integration = verify_db.scalar(
+            select(PlatformIntegration).where(
+                PlatformIntegration.key == "flights_duffel"
+            )
+        )
+        assert late_integration is not None
+        assert late_integration.credential_profile_id is None
 
 
 def test_concurrent_same_idempotency_key_calls_provider_once(

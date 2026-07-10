@@ -35,6 +35,8 @@ from app.deal_service import get_owned_deal_record
 from app.disruption_service import list_disruptions_for_booking
 from app.integrations.service import (
     get_booking_connector,
+    get_calendar_connector,
+    get_integration,
     get_mock_data_enabled,
     payload_is_simulated,
     provider_is_simulated,
@@ -71,6 +73,8 @@ def approve_and_book(
     deal = get_owned_deal_record(db=db, user=user, deal_id=deal_id)
     watch = _get_owned_watch_for_deal(db=db, user=user, deal=deal)
     booking_connector = get_booking_connector(db=db)
+    calendar_connector = get_calendar_connector(db=db, allow_disabled=True)
+    notification_integration = get_integration(db=db, key="notifications")
     claimed_deal_id = deal.id
     _require_step_up_auth(
         user=user,
@@ -272,6 +276,7 @@ def approve_and_book(
             booking=booking,
             deal=deal,
             watch=watch,
+            connector=calendar_connector,
         )
         calendar_transport = calendar_result.get("transport", "local-safe")
         calendar_detail = f"Calendar sync complete via {calendar_transport}."
@@ -289,6 +294,7 @@ def approve_and_book(
         body=notification_body,
         booking=booking,
         deal=deal,
+        integration=notification_integration,
     )
     booking.calendar_detail = calendar_detail
 
