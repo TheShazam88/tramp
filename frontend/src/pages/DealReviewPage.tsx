@@ -47,6 +47,33 @@ function toneForStatus(status?: string | null) {
   }
 }
 
+function readinessResolutionFor(blocker: string) {
+  const normalized = blocker.toLowerCase();
+
+  if (
+    normalized.includes("payment") ||
+    normalized.includes("traveler") ||
+    normalized.includes("passport")
+  ) {
+    return { to: "/profile", label: "Open profile setup" };
+  }
+  if (normalized.includes("two-factor") || normalized.includes("authentication")) {
+    return { to: "/setup/2fa", label: "Set up two-factor authentication" };
+  }
+  if (normalized.includes("provider") || normalized.includes("inventory")) {
+    return { to: "/admin/integrations", label: "Review provider integrations" };
+  }
+  if (
+    normalized.includes("watch") ||
+    normalized.includes("deal") ||
+    normalized.includes("expired") ||
+    normalized.includes("refresh")
+  ) {
+    return { to: "/watches", label: "Open watches" };
+  }
+  return { to: "/profile/presets", label: "Review profile presets" };
+}
+
 interface DealReviewLocationState {
   reviewSeed?: Partial<DealData>;
 }
@@ -132,7 +159,20 @@ export function DealReviewPage() {
   const bookingLocked = ["rejected", "booked", "expired", "failed"].includes(deal.dealStatus ?? "");
   const bookNowAction = deal.ctaActions.find((action) => action.key === "book_now");
   const ignoreAction = deal.ctaActions.find((action) => action.key === "ignore");
-  const hasReadinessBlockers = Boolean(deal.readiness?.blockers?.length);
+  const readinessBlockers = deal.readiness?.blockers ?? [];
+  const hasReadinessBlockers = readinessBlockers.length > 0;
+  const hasNoPaymentMethods = profileWorkspace?.paymentMethods.length === 0;
+  const readinessBlockersForGuidance = hasNoPaymentMethods
+    ? readinessBlockers.filter((blocker) => !blocker.toLowerCase().includes("payment"))
+    : readinessBlockers;
+  const readinessResolutionLinks = Array.from(
+    new Map(
+      readinessBlockersForGuidance.map((blocker) => {
+        const resolution = readinessResolutionFor(blocker);
+        return [resolution.to, resolution] as const;
+      }),
+    ).values(),
+  );
   const linkedApprovalUnavailable =
     approvalTokenFromLink.length > 0 &&
     (approvalTokenVerification.isFetching ||
@@ -472,6 +512,38 @@ export function DealReviewPage() {
           ))}
         </div>
       </Surface>
+
+      {hasNoPaymentMethods ? (
+        <div className="notice notice-alert">
+          <p className="item-title">Add a saved payment method</p>
+          <p className="item-copy">
+            A saved payment method is required before TRAMP can book this deal. Add one in your profile,
+            then return to this review.
+          </p>
+          <Button variant="secondary" to="/profile">
+            Add payment method
+          </Button>
+        </div>
+      ) : null}
+
+      {readinessBlockersForGuidance.length > 0 ? (
+        <div className="notice notice-alert">
+          <p className="item-title">Resolve booking readiness</p>
+          <p className="item-copy">Book now stays disabled until these setup items are resolved.</p>
+          <ul className="info-list">
+            {readinessBlockersForGuidance.map((blocker) => (
+              <li key={blocker}>{blocker}</li>
+            ))}
+          </ul>
+          <div className="button-row">
+            {readinessResolutionLinks.map((resolution) => (
+              <Button key={resolution.to} variant="secondary" to={resolution.to}>
+                {resolution.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="button-row">
         <Button
