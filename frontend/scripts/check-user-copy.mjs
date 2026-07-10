@@ -1,22 +1,67 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { lstat, readdir, readFile } from "node:fs/promises";
+import { dirname, extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const forbidden = /[\u2013\u2014]/;
-const defaults = ["src", "index.html"];
+const textExtensions = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".css",
+  ".html",
+  ".json",
+  ".md",
+]);
+const frontendDirectory = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
+const defaults = [
+  resolve(frontendDirectory, "src"),
+  resolve(frontendDirectory, "index.html"),
+];
 const requested = process.argv.slice(2);
-const roots = (requested.length ? requested : defaults).map((item) => resolve(item));
+const roots = requested.length
+  ? requested.map((item) => resolve(item))
+  : defaults;
 const files = [];
+let hadFilesystemError = false;
 
-async function collect(path) {
-  const info = await stat(path);
+function reportFilesystemError(action, path, error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`Unable to ${action} "${path}": ${message}`);
+  hadFilesystemError = true;
+}
+
+async function collect(path, { explicitFile = false } = {}) {
+  let info;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    reportFilesystemError("inspect", path, error);
+    return;
+  }
+
+  if (info.isSymbolicLink()) return;
   if (info.isFile()) {
-    files.push(path);
+    if (explicitFile || textExtensions.has(extname(path).toLowerCase())) {
+      files.push(path);
+    }
     return;
   }
   if (!info.isDirectory()) return;
 
-  const entries = await readdir(path, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(path, { withFileTypes: true });
+  } catch (error) {
+    reportFilesystemError("read directory", path, error);
+    return;
+  }
+
   for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
     if (
       entry.isDirectory() &&
       (entry.name.startsWith(".") || entry.name === "node_modules")
@@ -27,11 +72,20 @@ async function collect(path) {
   }
 }
 
-for (const root of roots) await collect(root);
+for (const root of roots) {
+  await collect(root, { explicitFile: requested.length > 0 });
+}
 
 const failures = [];
 for (const file of files) {
-  const text = await readFile(file, "utf8");
+  let text;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    reportFilesystemError("read file", file, error);
+    continue;
+  }
+
   text.split(/\r?\n/).forEach((line, index) => {
     if (forbidden.test(line)) {
       failures.push(`${file}:${index + 1}: ${line.trim()}`);
@@ -42,7 +96,10 @@ for (const file of files) {
 if (failures.length) {
   console.error("User-facing copy contains an em dash or en dash:");
   console.error(failures.join("\n"));
-  process.exit(1);
 }
 
-console.log(`Copy check passed across ${files.length} files.`);
+if (failures.length || hadFilesystemError) {
+  process.exitCode = 1;
+} else {
+  console.log(`Copy check passed across ${files.length} files.`);
+}
