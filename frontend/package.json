@@ -4,7 +4,8 @@
   "description": "Travel Watch frontend scaffold",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run check:copy && tsc --noEmit && vite build",
+    "check:copy": "node scripts/check-user-copy.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
