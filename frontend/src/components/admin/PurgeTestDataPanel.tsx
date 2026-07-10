@@ -219,7 +219,7 @@ export function PurgeTestDataPanel() {
     },
   });
 
-  const hasBlockingWarnings = Boolean(
+  const hasRetainedEvidence = Boolean(
     preview &&
       (preview.unknownCancellationCount > 0 ||
         preview.unrevertedFeedbackCount > 0),
@@ -228,7 +228,6 @@ export function PurgeTestDataPanel() {
   const canPurge = Boolean(
     preview?.planDigest &&
       confirmation === confirmationPhrase &&
-      !hasBlockingWarnings &&
       !pending,
   );
 
@@ -311,16 +310,15 @@ export function PurgeTestDataPanel() {
             heading="Purge preview"
           />
 
-          {hasBlockingWarnings ? (
+          {hasRetainedEvidence ? (
             <div
-              className="notice notice-alert"
-              role="alert"
-              aria-label="Purge blocked"
+              className="notice"
+              role="status"
+              aria-label="Retained evidence notice"
             >
-              <strong>Purge is blocked.</strong> Purge is blocked while unknown
-              cancellation provenance or unreverted feedback remains. Review the
-              warning details and request a new preview after the records are
-              classified.
+              <strong>Retained evidence will not be deleted.</strong> These records
+              will remain after the purge. The backend will remove only activity it
+              has classified as simulated.
             </div>
           ) : null}
 

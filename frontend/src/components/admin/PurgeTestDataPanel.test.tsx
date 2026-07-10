@@ -192,21 +192,21 @@ describe("PurgeTestDataPanel", () => {
     expect(purgeButton).toBeEnabled();
   });
 
-  it("blocks execution when unknown provenance or feedback cannot be reverted", async () => {
+  it("allows purge while clearly retaining unknown provenance and unreverted feedback", async () => {
     const user = userEvent.setup();
-    const purge = vi.spyOn(travelWatchApi, "purgeTestData");
+    const warningResult = purgeResult({
+      unknownCancellationCount: 1,
+      unrevertedFeedbackCount: 2,
+      warnings: [
+        "One cancellation has unknown provenance.",
+        "Two feedback records could not be safely reverted.",
+      ],
+    });
+    const purge = vi
+      .spyOn(travelWatchApi, "purgeTestData")
+      .mockResolvedValue({ ...warningResult, dryRun: false });
     renderPanel();
-    await loadPreview(
-      user,
-      purgeResult({
-        unknownCancellationCount: 1,
-        unrevertedFeedbackCount: 2,
-        warnings: [
-          "One cancellation has unknown provenance.",
-          "Two feedback records could not be safely reverted.",
-        ],
-      }),
-    );
+    const preview = await loadPreview(user, warningResult);
 
     await user.type(
       screen.getByRole("textbox", { name: "Type the confirmation phrase" }),
@@ -214,14 +214,29 @@ describe("PurgeTestDataPanel", () => {
     );
 
     expect(
-      screen.getByRole("alert", { name: "Purge blocked" }),
-    ).toHaveTextContent(
-      "Purge is blocked while unknown cancellation provenance or unreverted feedback remains.",
-    );
+      within(preview).getByText("One cancellation has unknown provenance."),
+    ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Purge test data permanently" }),
-    ).toBeDisabled();
-    expect(purge).not.toHaveBeenCalled();
+      within(preview).getByText(
+        "Two feedback records could not be safely reverted.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Retained evidence notice" }),
+    ).toHaveTextContent(
+      "These records will remain after the purge.",
+    );
+    const purgeButton = screen.getByRole("button", {
+      name: "Purge test data permanently",
+    });
+    expect(purgeButton).toBeEnabled();
+
+    await user.click(purgeButton);
+
+    expect(purge).toHaveBeenCalledWith({
+      confirmation: confirmationPhrase,
+      planDigest: warningResult.planDigest,
+    });
   });
 
   it("clears a stale preview and focuses the safe error", async () => {
