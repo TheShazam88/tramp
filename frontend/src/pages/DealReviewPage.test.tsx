@@ -1,14 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { PropsWithChildren } from "react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { saveStoredBookingAttempt } from "@/api/bookingAttempts";
 import { ApiError } from "@/api/client";
 import { travelWatchApi } from "@/api/travelWatchApi";
 import type {
   BookDealRequest,
+  BookingAttemptReconciliation,
   DealApprovalResult,
   DealData,
   DealViewData,
@@ -120,33 +121,26 @@ const profileWorkspace: ProfileWorkspace = {
   },
 };
 
-type ReconcileBooking = (dealId: string) => Promise<DealApprovalResult | null>;
+function reconciliation(
+  overrides: Partial<BookingAttemptReconciliation> = {},
+): BookingAttemptReconciliation {
+  return {
+    idempotencyKey: "attempt-key-123",
+    dealId: "deal-1",
+    paymentMethodId: "payment-1",
+    status: "started",
+    code: "attempt_in_progress",
+    message: "This booking attempt is still processing.",
+    safeToRetry: false,
+    booking: null,
+    startedAt: "2030-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
 
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location-search">{location.search}</div>;
-}
-
-function createWrapper(queryClient: QueryClient, initialEntry: string) {
-  return function Wrapper({ children }: PropsWithChildren) {
-    return (
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[initialEntry]}>
-          <Routes>
-            <Route
-              path="/deals/:dealId"
-              element={
-                <>
-                  {children}
-                  <LocationProbe />
-                </>
-              }
-            />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    );
-  };
 }
 
 function renderDealReview(initialEntry = "/deals/deal-1?watchId=watch-1") {
@@ -156,10 +150,27 @@ function renderDealReview(initialEntry = "/deals/deal-1?watchId=watch-1") {
       mutations: { retry: false },
     },
   });
-  const rendered = render(<DealReviewPage />, {
-    wrapper: createWrapper(queryClient, initialEntry),
-  });
-  return { ...rendered, queryClient, user: userEvent.setup() };
+  const router = createMemoryRouter(
+    [
+      {
+        path: "/deals/:dealId",
+        element: (
+          <>
+            <DealReviewPage />
+            <LocationProbe />
+          </>
+        ),
+      },
+      { path: "/bookings", element: <div>Bookings destination</div> },
+    ],
+    { initialEntries: [initialEntry] },
+  );
+  const rendered = render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return { ...rendered, queryClient, router, user: userEvent.setup() };
 }
 
 async function openAndFillSecureForm(
@@ -173,9 +184,12 @@ async function openAndFillSecureForm(
 }
 
 describe("DealReviewPage booking execution", () => {
-  let reconcileBooking: ReturnType<typeof vi.fn<ReconcileBooking>>;
+  let reconcileAttempt: ReturnType<
+    typeof vi.fn<(idempotencyKey: string) => Promise<BookingAttemptReconciliation>>
+  >;
 
   beforeEach(() => {
+    sessionStorage.clear();
     vi.spyOn(travelWatchApi, "getDealReview").mockResolvedValue({
       deal: structuredClone(baseDeal),
       source: "live",
@@ -198,12 +212,10 @@ describe("DealReviewPage booking execution", () => {
       status: "rejected",
       detail: "Rejected.",
     });
-    reconcileBooking = vi.fn<ReconcileBooking>().mockResolvedValue(null);
-    Object.defineProperty(travelWatchApi, "getBookingForDeal", {
-      configurable: true,
-      value: reconcileBooking,
-      writable: true,
-    });
+    reconcileAttempt = vi
+      .fn<(idempotencyKey: string) => Promise<BookingAttemptReconciliation>>()
+      .mockRejectedValue(new ApiError("Not found", 404, { detail: "Booking attempt not found." }));
+    vi.spyOn(travelWatchApi, "reconcileBookingAttempt").mockImplementation(reconcileAttempt);
   });
 
   it("disables submit, hide, and cancel controls while booking is pending", async () => {
@@ -257,7 +269,14 @@ describe("DealReviewPage booking execution", () => {
 
   it("reconciles a lost booking response before reporting success", async () => {
     vi.mocked(travelWatchApi.bookDeal).mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    reconcileBooking.mockResolvedValueOnce(approvalResult);
+    reconcileAttempt.mockResolvedValueOnce(
+      reconciliation({
+        status: "booked",
+        code: "booked",
+        message: "Booking confirmed from the saved booking record.",
+        booking: approvalResult,
+      }),
+    );
     const { user } = renderDealReview();
     await openAndFillSecureForm(user);
 
@@ -266,7 +285,7 @@ describe("DealReviewPage booking execution", () => {
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent("Booking confirmed.");
     expect(status).toHaveFocus();
-    expect(reconcileBooking).toHaveBeenCalledWith("deal-1");
+    expect(reconcileAttempt).toHaveBeenCalledWith(expect.any(String));
     expect(screen.queryByLabelText("Six-digit TOTP code")).not.toBeInTheDocument();
   });
 
@@ -279,7 +298,7 @@ describe("DealReviewPage booking execution", () => {
 
     await user.click(screen.getByRole("button", { name: "Book now" }));
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("could not be confirmed");
+    expect(alert).toHaveTextContent("No server booking record was found");
     expect(alert).toHaveFocus();
     expect(screen.getByLabelText("Six-digit TOTP code")).toHaveValue("");
     expect(screen.getByLabelText("Master-key passphrase (optional)")).toHaveValue("");
@@ -337,6 +356,104 @@ describe("DealReviewPage booking execution", () => {
     expect(JSON.stringify(queryClient.getMutationCache().getAll())).not.toContain(
       "master-secret",
     );
+  });
+
+  it("restores a stored attempt after reload and reconciles its booking", async () => {
+    saveStoredBookingAttempt({
+      version: 1,
+      dealId: "deal-1",
+      idempotencyKey: "restored-attempt-key",
+      paymentMethodId: "payment-1",
+      state: "reconciling",
+    });
+    reconcileAttempt.mockResolvedValueOnce(
+      reconciliation({
+        idempotencyKey: "restored-attempt-key",
+        status: "booked",
+        code: "booked",
+        message: "Booking confirmed from the saved booking record.",
+        booking: approvalResult,
+      }),
+    );
+
+    renderDealReview();
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("Booking confirmed.");
+    expect(reconcileAttempt).toHaveBeenCalledWith("restored-attempt-key");
+    expect(sessionStorage.getItem("tramp.booking-attempt.deal-1")).toBeNull();
+    expect(travelWatchApi.createApprovalToken).not.toHaveBeenCalled();
+  });
+
+  it("reconciles stateful 409 conflicts and locks payment, rejection, and navigation", async () => {
+    vi.mocked(travelWatchApi.bookDeal).mockRejectedValueOnce(
+      new ApiError("Conflict", 409, {
+        detail: {
+          code: "attempt_in_progress",
+          message: "This booking attempt is still processing.",
+          safe_to_retry: false,
+        },
+      }),
+    );
+    reconcileAttempt.mockResolvedValueOnce(reconciliation());
+    const { router, user } = renderDealReview();
+    await openAndFillSecureForm(user);
+
+    await user.click(screen.getByRole("button", { name: "Book now" }));
+
+    const recoveryStatus = await screen.findByRole("status");
+    expect(recoveryStatus).toHaveTextContent("still processing");
+    expect(reconcileAttempt).toHaveBeenCalledWith(expect.any(String));
+    expect(screen.getByLabelText("Saved payment method")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Too pricey" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Ignore" })).toBeDisabled();
+    const stored = sessionStorage.getItem("tramp.booking-attempt.deal-1") ?? "";
+    expect(stored).toContain("payment-1");
+    expect(stored).not.toMatch(/123456|master-secret|approval.?token/i);
+
+    const navigation = router.navigate("/bookings");
+    const navigationAlert = await screen.findByRole("alert");
+    expect(navigationAlert).toHaveTextContent("Booking recovery is still pending");
+    expect(router.state.location.pathname).toBe("/deals/deal-1");
+    await user.click(screen.getByRole("button", { name: "Stay on this page" }));
+    await navigation;
+
+    const beforeUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
+  });
+
+  it("clears a definitive safe-to-retry conflict before generating a new key", async () => {
+    let storedDuringRequest = "";
+    vi.mocked(travelWatchApi.bookDeal).mockImplementationOnce(async () => {
+      storedDuringRequest =
+        sessionStorage.getItem("tramp.booking-attempt.deal-1") ?? "";
+      throw new ApiError("Conflict", 409, {
+        detail: {
+          code: "deal_expired",
+          message: "Start a new booking attempt.",
+          safe_to_retry: true,
+        },
+      });
+    });
+    const { user } = renderDealReview();
+    await openAndFillSecureForm(user);
+
+    await user.click(screen.getByRole("button", { name: "Book now" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Start a new booking attempt.");
+    expect(storedDuringRequest).toContain("payment-1");
+    expect(sessionStorage.getItem("tramp.booking-attempt.deal-1")).toBeNull();
+    expect(screen.getByLabelText("Saved payment method")).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Too pricey" })).not.toBeDisabled();
+
+    await user.type(screen.getByLabelText("Six-digit TOTP code"), "654321");
+    await user.type(screen.getByLabelText("Master-key passphrase (optional)"), "retry-secret");
+    await user.click(screen.getByRole("button", { name: "Book now" }));
+    await screen.findByRole("status");
+
+    const requests = vi.mocked(travelWatchApi.bookDeal).mock.calls.map(([request]) => request);
+    expect(requests[1]?.idempotencyKey).not.toBe(requests[0]?.idempotencyKey);
   });
 
   it("renders backend-provided readiness resolutions without parsing blocker prose", async () => {

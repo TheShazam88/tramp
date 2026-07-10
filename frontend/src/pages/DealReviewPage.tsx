@@ -1,10 +1,32 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useParams, useSearchParams } from "react-router-dom";
+import {
+  useBeforeUnload,
+  useBlocker,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 
-import { bookingErrorKind, getApiErrorMessage } from "@/api/errors";
+import {
+  clearStoredBookingAttempt,
+  loadStoredBookingAttempt,
+  saveStoredBookingAttempt,
+} from "@/api/bookingAttempts";
+import type { StoredBookingAttempt } from "@/api/bookingAttempts";
+import { ApiError } from "@/api/client";
+import {
+  bookingErrorKind,
+  getApiErrorMessage,
+  getBookingConflictDetail,
+} from "@/api/errors";
 import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
-import type { BookDealRequest, DealApprovalResult, DealData } from "@/api/types";
+import type {
+  BookDealRequest,
+  BookingAttemptReconciliation,
+  DealApprovalResult,
+  DealData,
+} from "@/api/types";
 import {
   Badge,
   Button,
@@ -37,7 +59,7 @@ interface DealReviewLocationState {
 }
 
 type BookingFeedback = {
-  kind: "success" | "error";
+  kind: "success" | "error" | "status";
   message: string;
 };
 
@@ -47,6 +69,8 @@ type BookingMutationOutcome =
       result?: never;
       errorKind: "definite" | "ambiguous";
       message: string;
+      conflictCode?: string;
+      safeToRetry: boolean;
     };
 
 export function DealReviewPage() {
@@ -56,24 +80,41 @@ export function DealReviewPage() {
   const queryClient = useQueryClient();
   const watchId = searchParams.get("watchId") ?? undefined;
   const approvalTokenFromLink = searchParams.get("approvalToken") ?? "";
-  const approvalTokenQueryKey = queryKeys.approvalToken(dealId, approvalTokenFromLink);
+  const approvalTokenQueryKey = useMemo(
+    () => queryKeys.approvalToken(dealId, approvalTokenFromLink),
+    [approvalTokenFromLink, dealId],
+  );
   const reviewSeed = useMemo(
     () => ((location.state as DealReviewLocationState | null)?.reviewSeed ?? null),
     [location.state],
   );
-  const [showApprovalForm, setShowApprovalForm] = useState(false);
-  const [paymentMethodId, setPaymentMethodId] = useState("");
+  const [logicalAttempt, setLogicalAttempt] = useState<StoredBookingAttempt | null>(() =>
+    loadStoredBookingAttempt(dealId),
+  );
+  const [showApprovalForm, setShowApprovalForm] = useState(Boolean(logicalAttempt));
+  const [paymentMethodId, setPaymentMethodId] = useState(
+    logicalAttempt?.paymentMethodId ?? "",
+  );
   const [totpCode, setTotpCode] = useState("");
   const [masterKeyPassphrase, setMasterKeyPassphrase] = useState("");
   const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
   const [bookingFeedback, setBookingFeedback] = useState<BookingFeedback | null>(null);
   const [bookingAttemptPending, setBookingAttemptPending] = useState(false);
+  const [attemptAllowsRetry, setAttemptAllowsRetry] = useState(false);
+  const [attemptReconciliationPending, setAttemptReconciliationPending] = useState(
+    Boolean(logicalAttempt),
+  );
   const bookingFeedbackRef = useRef<HTMLDivElement>(null);
+  const navigationAlertRef = useRef<HTMLDivElement>(null);
   const bookingRequestRef = useRef<BookDealRequest | null>(null);
   const bookingAttemptPendingRef = useRef(false);
-  const idempotencyKeyRef = useRef<string | null>(null);
+  const idempotencyKeyRef = useRef<string | null>(
+    logicalAttempt?.idempotencyKey ?? null,
+  );
   const mintedApprovalTokenRef = useRef<string | null>(null);
   const consumedApprovalTokenRef = useRef<string | null>(null);
+  const reconciledAttemptKeyRef = useRef<string | null>(null);
+  const allowInternalNavigationRef = useRef(false);
   const mountedRef = useRef(true);
 
   const { data, error } = useQuery({
@@ -97,14 +138,19 @@ export function DealReviewPage() {
         return {
           errorKind: "definite",
           message: "Secure booking details expired. Re-enter them and try again.",
+          safeToRetry: true,
         };
       }
       try {
         return { result: await travelWatchApi.bookDeal(payload) };
       } catch (error) {
+        const errorKind = bookingErrorKind(error);
+        const conflict = getBookingConflictDetail(error);
         return {
-          errorKind: bookingErrorKind(error),
+          errorKind,
           message: getApiErrorMessage(error, "Unable to complete this booking."),
+          conflictCode: conflict?.code,
+          safeToRetry: conflict?.safeToRetry ?? errorKind === "definite",
         };
       }
     },
@@ -115,7 +161,12 @@ export function DealReviewPage() {
   resetBookingMutationRef.current = resetBookingMutation;
 
   const rejectMutation = useMutation({
-    mutationFn: (reason: string) => travelWatchApi.rejectDeal({ dealId, reason }),
+    mutationFn: (reason: string) => {
+      if (bookingAttemptPendingRef.current || idempotencyKeyRef.current) {
+        throw new Error("Resolve the active booking attempt before rejecting this deal.");
+      }
+      return travelWatchApi.rejectDeal({ dealId, reason });
+    },
     onSuccess: async (result) => {
       setApprovalNotice(result.detail);
       await Promise.all([
@@ -124,6 +175,172 @@ export function DealReviewPage() {
       ]);
     },
   });
+
+  const persistLogicalAttempt = useCallback((attempt: StoredBookingAttempt) => {
+    saveStoredBookingAttempt(attempt);
+    setLogicalAttempt(attempt);
+    setPaymentMethodId(attempt.paymentMethodId);
+    idempotencyKeyRef.current = attempt.idempotencyKey;
+  }, []);
+
+  const clearLogicalAttempt = useCallback(() => {
+    clearStoredBookingAttempt(dealId);
+    setLogicalAttempt(null);
+    setAttemptAllowsRetry(false);
+    setAttemptReconciliationPending(false);
+    idempotencyKeyRef.current = null;
+    mintedApprovalTokenRef.current = null;
+    reconciledAttemptKeyRef.current = null;
+  }, [dealId]);
+
+  const completeBookingSuccess = useCallback(
+    async (result: DealApprovalResult) => {
+      const bookingDetails = [
+        result.confirmationNote,
+        result.provider ? `Provider: ${result.provider}.` : "",
+        result.amount ? `Amount: ${result.amount}.` : "",
+        result.bookingStatus
+          ? `Status: ${result.bookingStatus.replace(/_/g, " ")}.`
+          : "",
+      ].filter(Boolean);
+      clearLogicalAttempt();
+
+      if (approvalTokenFromLink) {
+        await queryClient.cancelQueries({ queryKey: approvalTokenQueryKey, exact: true });
+        consumedApprovalTokenRef.current = approvalTokenFromLink;
+        const nextSearchParams = new URLSearchParams(searchParams);
+        nextSearchParams.delete("approvalToken");
+      allowInternalNavigationRef.current = true;
+        setSearchParams(nextSearchParams, { replace: true });
+        await Promise.resolve();
+      allowInternalNavigationRef.current = false;
+        queryClient.removeQueries({ queryKey: approvalTokenQueryKey, exact: true });
+      }
+
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: queryKeys.dealVariants(dealId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.profile }),
+      ]);
+      if (mountedRef.current) {
+        setBookingFeedback({ kind: "success", message: bookingDetails.join(" ") });
+        setShowApprovalForm(false);
+        setPaymentMethodId("");
+      }
+    },
+    [
+      approvalTokenFromLink,
+      approvalTokenQueryKey,
+      clearLogicalAttempt,
+      dealId,
+      queryClient,
+      searchParams,
+      setSearchParams,
+    ],
+  );
+
+  const applyAttemptReconciliation = useCallback(
+    async (
+      storedAttempt: StoredBookingAttempt,
+      result: BookingAttemptReconciliation,
+    ) => {
+      if (
+        result.dealId !== storedAttempt.dealId ||
+        result.paymentMethodId !== storedAttempt.paymentMethodId
+      ) {
+        const conflictAttempt: StoredBookingAttempt = {
+          ...storedAttempt,
+          paymentMethodId:
+            result.dealId === storedAttempt.dealId
+              ? result.paymentMethodId
+              : storedAttempt.paymentMethodId,
+          state: "manual_recovery",
+          code: "idempotency_conflict",
+          message:
+            "Stored booking details did not match the server record. Manual recovery is required.",
+        };
+        persistLogicalAttempt(conflictAttempt);
+        setAttemptAllowsRetry(false);
+        setBookingFeedback({ kind: "status", message: conflictAttempt.message ?? "" });
+        return;
+      }
+      if (result.booking) {
+        await completeBookingSuccess(result.booking);
+        return;
+      }
+      if (result.safeToRetry) {
+        clearLogicalAttempt();
+        setBookingFeedback({ kind: "error", message: result.message });
+        setShowApprovalForm(true);
+        return;
+      }
+
+      const unresolvedAttempt: StoredBookingAttempt = {
+        ...storedAttempt,
+        state: "manual_recovery",
+        code: result.code,
+        message: result.message,
+      };
+      persistLogicalAttempt(unresolvedAttempt);
+      setAttemptAllowsRetry(false);
+      setShowApprovalForm(true);
+      setBookingFeedback({ kind: "status", message: result.message });
+    },
+    [clearLogicalAttempt, completeBookingSuccess, persistLogicalAttempt],
+  );
+
+  const reconcileLogicalAttempt = useCallback(
+    async (storedAttempt: StoredBookingAttempt) => {
+      setAttemptReconciliationPending(true);
+      setAttemptAllowsRetry(false);
+      setBookingFeedback({
+        kind: "status",
+        message: "Checking the saved booking attempt before any new action.",
+      });
+      try {
+        const result = await travelWatchApi.reconcileBookingAttempt(
+          storedAttempt.idempotencyKey,
+        );
+        if (mountedRef.current) {
+          await applyAttemptReconciliation(storedAttempt, result);
+        }
+      } catch (reconciliationError) {
+        if (!mountedRef.current) {
+          return;
+        }
+        if (reconciliationError instanceof ApiError && reconciliationError.status === 404) {
+          const retryableAttempt: StoredBookingAttempt = {
+            ...storedAttempt,
+            state: "reconciling",
+            code: "not_found",
+            message:
+              "No server booking record was found. Retry this same booking attempt.",
+          };
+          persistLogicalAttempt(retryableAttempt);
+          setAttemptAllowsRetry(true);
+          setShowApprovalForm(true);
+          setBookingFeedback({ kind: "error", message: retryableAttempt.message ?? "" });
+        } else {
+          const pendingAttempt: StoredBookingAttempt = {
+            ...storedAttempt,
+            state: "reconciling",
+            code: "reconciliation_unavailable",
+            message:
+              "Booking recovery could not be checked. Do not start another booking attempt.",
+          };
+          persistLogicalAttempt(pendingAttempt);
+          setAttemptAllowsRetry(false);
+          setBookingFeedback({ kind: "status", message: pendingAttempt.message ?? "" });
+        }
+      } finally {
+        if (mountedRef.current) {
+          setAttemptReconciliationPending(false);
+        }
+      }
+    },
+    [applyAttemptReconciliation, persistLogicalAttempt],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -152,6 +369,58 @@ export function DealReviewPage() {
       consumedApprovalTokenRef.current = null;
     }
   }, [approvalTokenFromLink, dealId, queryClient]);
+
+  useEffect(() => {
+    const storedAttempt = loadStoredBookingAttempt(dealId);
+    if (!storedAttempt) {
+      setLogicalAttempt(null);
+      setAttemptAllowsRetry(false);
+      setAttemptReconciliationPending(false);
+      setPaymentMethodId("");
+      idempotencyKeyRef.current = null;
+      reconciledAttemptKeyRef.current = null;
+      return;
+    }
+    persistLogicalAttempt(storedAttempt);
+    setShowApprovalForm(true);
+    if (
+      bookingAttemptPendingRef.current ||
+      reconciledAttemptKeyRef.current === storedAttempt.idempotencyKey
+    ) {
+      return;
+    }
+    reconciledAttemptKeyRef.current = storedAttempt.idempotencyKey;
+    void reconcileLogicalAttempt(storedAttempt);
+  }, [dealId, persistLogicalAttempt, reconcileLogicalAttempt]);
+
+  const isBookingPending = bookingAttemptPending || bookingMutation.isPending;
+  const hasUnresolvedAttempt = logicalAttempt !== null;
+  const navigationLocked = isBookingPending || hasUnresolvedAttempt;
+  const navigationBlocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      navigationLocked &&
+      !allowInternalNavigationRef.current &&
+      (currentLocation.pathname !== nextLocation.pathname ||
+        currentLocation.search !== nextLocation.search),
+  );
+
+  useBeforeUnload(
+    useCallback(
+      (event) => {
+        if (navigationLocked) {
+          event.preventDefault();
+          event.returnValue = "";
+        }
+      },
+      [navigationLocked],
+    ),
+  );
+
+  useEffect(() => {
+    if (navigationBlocker.state === "blocked") {
+      navigationAlertRef.current?.focus();
+    }
+  }, [navigationBlocker.state]);
 
   const clearSensitiveFields = useCallback(() => {
     setTotpCode("");
@@ -188,49 +457,20 @@ export function DealReviewPage() {
     (approvalTokenVerification.isFetching ||
       approvalTokenVerification.isError ||
       approvalTokenVerification.data?.valid !== true);
-  const isBookingPending = bookingAttemptPending || bookingMutation.isPending;
+  const attemptBlocksBooking =
+    attemptReconciliationPending || (hasUnresolvedAttempt && !attemptAllowsRetry);
+  const effectivePaymentMethodId =
+    logicalAttempt?.paymentMethodId ?? paymentMethodId;
   const bookingCanSubmit =
     data.approvalAvailable &&
     bookNowAction?.enabled !== false &&
     !bookingLocked &&
     !hasReadinessBlockers &&
-    paymentMethodId.length > 0 &&
+    effectivePaymentMethodId.length > 0 &&
     /^\d{6}$/.test(totpCode) &&
     !isBookingPending &&
+    !attemptBlocksBooking &&
     !linkedApprovalUnavailable;
-
-  const completeBookingSuccess = async (result: DealApprovalResult) => {
-    const bookingDetails = [
-      result.confirmationNote,
-      result.provider ? `Provider: ${result.provider}.` : "",
-      result.amount ? `Amount: ${result.amount}.` : "",
-      result.bookingStatus ? `Status: ${result.bookingStatus.replace(/_/g, " ")}.` : "",
-    ].filter(Boolean);
-    idempotencyKeyRef.current = null;
-    mintedApprovalTokenRef.current = null;
-
-    if (approvalTokenFromLink) {
-      await queryClient.cancelQueries({ queryKey: approvalTokenQueryKey, exact: true });
-      consumedApprovalTokenRef.current = approvalTokenFromLink;
-      const nextSearchParams = new URLSearchParams(searchParams);
-      nextSearchParams.delete("approvalToken");
-      setSearchParams(nextSearchParams, { replace: true });
-      await Promise.resolve();
-      queryClient.removeQueries({ queryKey: approvalTokenQueryKey, exact: true });
-    }
-
-    await Promise.allSettled([
-      queryClient.invalidateQueries({ queryKey: queryKeys.dealVariants(dealId) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.profile }),
-    ]);
-    if (mountedRef.current) {
-      setBookingFeedback({ kind: "success", message: bookingDetails.join(" ") });
-      setShowApprovalForm(false);
-      setPaymentMethodId("");
-    }
-  };
 
   const submitBooking = async () => {
     if (!bookingCanSubmit || bookingAttemptPendingRef.current) {
@@ -240,8 +480,16 @@ export function DealReviewPage() {
     bookingAttemptPendingRef.current = true;
     setBookingAttemptPending(true);
     setBookingFeedback(null);
-    const idempotencyKey = idempotencyKeyRef.current ?? crypto.randomUUID();
-    idempotencyKeyRef.current = idempotencyKey;
+    setAttemptAllowsRetry(false);
+    const storedAttempt: StoredBookingAttempt = logicalAttempt ?? {
+      version: 1,
+      dealId,
+      idempotencyKey: idempotencyKeyRef.current ?? crypto.randomUUID(),
+      paymentMethodId: effectivePaymentMethodId,
+      state: "starting",
+    };
+    persistLogicalAttempt(storedAttempt);
+    const idempotencyKey = storedAttempt.idempotencyKey;
 
     try {
       let approvalToken = approvalTokenFromLink;
@@ -265,11 +513,12 @@ export function DealReviewPage() {
       bookingRequestRef.current = {
         dealId,
         approvalToken,
-        paymentMethodId,
+        paymentMethodId: storedAttempt.paymentMethodId,
         totpCode,
         masterKeyPassphrase,
         idempotencyKey,
       };
+      persistLogicalAttempt({ ...storedAttempt, state: "submitted" });
       const outcome = await bookingMutation.mutateAsync();
       bookingRequestRef.current = null;
       if (mountedRef.current) {
@@ -285,33 +534,37 @@ export function DealReviewPage() {
       }
 
       if (outcome.errorKind === "ambiguous") {
-        let reconciledBooking: DealApprovalResult | null = null;
-        try {
-          reconciledBooking = await travelWatchApi.getBookingForDeal(dealId);
-        } catch {
-          reconciledBooking = null;
-        }
-        if (!mountedRef.current) {
-          return;
-        }
-        if (reconciledBooking) {
-          await completeBookingSuccess(reconciledBooking);
-          return;
-        }
+        const reconciliationAttempt: StoredBookingAttempt = {
+          ...storedAttempt,
+          state: "reconciling",
+          ...(outcome.conflictCode ? { code: outcome.conflictCode } : {}),
+          message: outcome.message,
+        };
+        persistLogicalAttempt(reconciliationAttempt);
+        reconciledAttemptKeyRef.current = idempotencyKey;
+        await reconcileLogicalAttempt(reconciliationAttempt);
+        return;
+      }
+
+      if (outcome.safeToRetry) {
+        clearLogicalAttempt();
         setBookingFeedback({
           kind: "error",
-          message:
-            "The booking outcome could not be confirmed. Re-enter the security details to retry this same booking attempt.",
+          message: outcome.message,
         });
         return;
       }
 
-      idempotencyKeyRef.current = null;
-      mintedApprovalTokenRef.current = null;
-      setBookingFeedback({ kind: "error", message: outcome.message });
+      const unresolvedAttempt: StoredBookingAttempt = {
+        ...storedAttempt,
+        state: "manual_recovery",
+        ...(outcome.conflictCode ? { code: outcome.conflictCode } : {}),
+        message: outcome.message,
+      };
+      persistLogicalAttempt(unresolvedAttempt);
+      setBookingFeedback({ kind: "status", message: outcome.message });
     } catch (submissionError) {
-      idempotencyKeyRef.current = null;
-      mintedApprovalTokenRef.current = null;
+      clearLogicalAttempt();
       if (mountedRef.current) {
         setBookingFeedback({
           kind: "error",
@@ -346,6 +599,35 @@ export function DealReviewPage() {
 
   return (
     <div className="stack">
+      {navigationBlocker.state === "blocked" ? (
+        <div
+          ref={navigationAlertRef}
+          className="notice notice-alert"
+          role="alert"
+          tabIndex={-1}
+        >
+          <p className="item-title">Booking recovery is still pending</p>
+          <p className="item-copy">
+            Stay on this page while the booking is processing, or leave only after the active
+            request settles. Saved recovery details never include your security codes.
+          </p>
+          <div className="button-row">
+            <Button type="button" onClick={() => navigationBlocker.reset?.()}>
+              Stay on this page
+            </Button>
+            {!isBookingPending ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => navigationBlocker.proceed?.()}
+              >
+                Leave and keep recovery
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <Surface className="page-hero">
         <SectionHeading
           eyebrow="Screen 3"
@@ -520,11 +802,11 @@ export function DealReviewPage() {
           <div
             ref={bookingFeedbackRef}
             className={
-              bookingFeedback.kind === "success"
-                ? "notice notice-value"
-                : "notice notice-alert"
+              bookingFeedback.kind === "error"
+                ? "notice notice-alert"
+                : "notice notice-value"
             }
-            role={bookingFeedback.kind === "success" ? "status" : "alert"}
+            role={bookingFeedback.kind === "error" ? "alert" : "status"}
             tabIndex={-1}
           >
             {bookingFeedback.message}
@@ -547,8 +829,12 @@ export function DealReviewPage() {
                     id="booking-payment-method"
                     className="text-input"
                     value={paymentMethodId}
-                    onChange={(event) => setPaymentMethodId(event.target.value)}
-                    disabled={isBookingPending}
+                    onChange={(event) => {
+                      if (!bookingAttemptPendingRef.current && !idempotencyKeyRef.current) {
+                        setPaymentMethodId(event.target.value);
+                      }
+                    }}
+                    disabled={isBookingPending || hasUnresolvedAttempt}
                   >
                     <option value="">Select a payment method</option>
                     {profileWorkspace.paymentMethods.map((paymentMethod) => {
@@ -671,6 +957,7 @@ export function DealReviewPage() {
               disabled={
                 rejectMutation.isPending ||
                 isBookingPending ||
+                hasUnresolvedAttempt ||
                 dealIntentLocked ||
                 ignoreAction?.enabled === false
               }
@@ -747,6 +1034,7 @@ export function DealReviewPage() {
           disabled={
             rejectMutation.isPending ||
             isBookingPending ||
+            hasUnresolvedAttempt ||
             dealIntentLocked ||
             ignoreAction?.enabled === false
           }

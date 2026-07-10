@@ -202,6 +202,19 @@ export interface DealApprovalResult {
   trampStampBalance: number;
 }
 
+export interface BookingAttemptReconciliation {
+  idempotencyKey: string;
+  dealId: string;
+  paymentMethodId: string;
+  status: string;
+  code: string;
+  message: string;
+  safeToRetry: boolean;
+  booking: DealApprovalResult | null;
+  startedAt: string;
+  finishedAt?: string;
+}
+
 export interface BookDealRequest {
   dealId: string;
   approvalToken: string;

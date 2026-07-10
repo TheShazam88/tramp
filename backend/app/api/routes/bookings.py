@@ -10,16 +10,28 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, get_token_service
 from app.api.schemas.bookings import (
     ApproveBookingRequest,
-    BookingResponse,
+    BookingAttemptReconciliationResponse,
+    BookingConflictDetail,
     BookingListResponse,
+    BookingResponse,
     CancellationCreateRequest,
     CancellationResponse,
     DisruptionResponse,
 )
-from app.booking_service import approve_and_book, cancel_booking, get_booking, list_bookings
+from app.booking_service import (
+    approve_and_book,
+    cancel_booking,
+    get_booking,
+    list_bookings,
+    reconcile_booking_attempt,
+)
 from app.db.models import Booking, Deal, TripWatch, User
 from app.db.session import get_db_session
-from app.disruption_service import create_disruption, list_disruptions_for_booking, resolve_disruption
+from app.disruption_service import (
+    create_disruption,
+    list_disruptions_for_booking,
+    resolve_disruption,
+)
 from app.security.tokens import SignedTokenService
 from app.service_errors import AuthenticationError, ConflictError
 
@@ -30,7 +42,14 @@ def _map_service_error(exc: Exception) -> HTTPException:
     if isinstance(exc, LookupError):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     if isinstance(exc, ConflictError):
-        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=BookingConflictDetail(
+                code=exc.code,
+                message=str(exc),
+                safe_to_retry=exc.safe_to_retry,
+            ).model_dump(),
+        )
     if isinstance(exc, AuthenticationError):
         return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -82,6 +101,25 @@ async def list_booking_records(
 ) -> BookingListResponse:
     try:
         return BookingListResponse(items=list_bookings(db=db, user=current_user))
+    except (LookupError, ValueError, ConflictError, AuthenticationError) as exc:
+        raise _map_service_error(exc) from exc
+
+
+@router.get(
+    "/bookings/attempts/{idempotency_key}",
+    response_model=BookingAttemptReconciliationResponse,
+)
+async def reconcile_booking_attempt_record(
+    idempotency_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> BookingAttemptReconciliationResponse:
+    try:
+        return reconcile_booking_attempt(
+            db=db,
+            user=current_user,
+            idempotency_key=idempotency_key,
+        )
     except (LookupError, ValueError, ConflictError, AuthenticationError) as exc:
         raise _map_service_error(exc) from exc
 

@@ -9,6 +9,7 @@ import {
 } from "@/api/mockData";
 import type {
   BookDealRequest,
+  BookingAttemptReconciliation,
   BookingSummary,
   BookingsViewData,
   CurrentUser,
@@ -41,6 +42,10 @@ let runtimePolicyCache:
       currentInventoryMode: "mock" | "live" | "empty";
     }
   | null = null;
+const mockBookingAttempts = new Map<
+  string,
+  { request: BookDealRequest; result: DealApprovalResult }
+>();
 
 async function withLatency<T>(payload: T) {
   await new Promise((resolve) => window.setTimeout(resolve, 120));
@@ -428,6 +433,19 @@ interface BookingRaw {
     type?: string | null;
     status?: string | null;
   }> | null;
+}
+
+interface BookingAttemptReconciliationRaw {
+  idempotency_key?: string | null;
+  deal_id?: string | null;
+  payment_method_id?: string | null;
+  status?: string | null;
+  code?: string | null;
+  message?: string | null;
+  safe_to_retry?: boolean | null;
+  booking?: BookingRaw | null;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 interface CancellationRaw {
@@ -2364,6 +2382,64 @@ export const travelWatchApi = {
       : null;
   },
 
+  reconcileBookingAttempt: async (
+    idempotencyKey: string,
+  ): Promise<BookingAttemptReconciliation> => {
+    if (useMockData) {
+      const attempt = mockBookingAttempts.get(idempotencyKey);
+      if (attempt) {
+        return withLatency({
+          idempotencyKey,
+          dealId: attempt.request.dealId,
+          paymentMethodId: attempt.request.paymentMethodId,
+          status: "booked",
+          code: "booked",
+          message: "Booking confirmed from the saved booking record.",
+          safeToRetry: false,
+          booking: attempt.result,
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        });
+      }
+      return withLatency({
+        idempotencyKey,
+        dealId: "",
+        paymentMethodId: "",
+        status: "started",
+        code: "attempt_in_progress",
+        message: "This simulated booking attempt is still processing.",
+        safeToRetry: false,
+        booking: null,
+        startedAt: new Date().toISOString(),
+      });
+    }
+
+    const response = await apiClient.get<BookingAttemptReconciliationRaw>(
+      `/bookings/attempts/${encodeURIComponent(idempotencyKey)}`,
+    );
+    const dealId = coerceString(response.deal_id);
+    return {
+      idempotencyKey: coerceString(response.idempotency_key) || idempotencyKey,
+      dealId,
+      paymentMethodId: coerceString(response.payment_method_id),
+      status: coerceString(response.status),
+      code: coerceString(response.code) || "conflict",
+      message:
+        coerceString(response.message) ||
+        "This booking attempt needs reconciliation before another booking can start.",
+      safeToRetry: response.safe_to_retry === true,
+      booking: response.booking
+        ? mapBookingToApprovalResult(
+            response.booking,
+            dealId,
+            "Booking confirmed from the saved booking record.",
+          )
+        : null,
+      startedAt: coerceString(response.started_at),
+      finishedAt: coerceString(response.finished_at) || undefined,
+    };
+  },
+
   getProfileWorkspace: async (): Promise<ProfileWorkspace> => {
     if (useMockData) {
       return withLatency(mockProfileWorkspace());
@@ -2456,7 +2532,7 @@ export const travelWatchApi = {
 
   bookDeal: async (payload: BookDealRequest): Promise<DealApprovalResult> => {
     if (useMockData) {
-      return withLatency({
+      const result: DealApprovalResult = {
         dealId: payload.dealId,
         bookingId: "booking-ana",
         bookingStatus: "ticketed",
@@ -2465,7 +2541,9 @@ export const travelWatchApi = {
         confirmationNote: "Simulated booking completed. No TRAMP-Stamp was awarded.",
         trampStampsAwarded: 0,
         trampStampBalance: 0,
-      });
+      };
+      mockBookingAttempts.set(payload.idempotencyKey, { request: payload, result });
+      return withLatency(result);
     }
 
     const booking = await apiClient.post<BookingRaw>("/bookings/approve", {

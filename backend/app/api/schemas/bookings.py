@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.db.models import (
+    BookingAttemptStatus,
     BookingStatus,
     CancellationStatus,
     DisruptionStatus,
@@ -29,6 +30,12 @@ class ApproveBookingRequest(BaseModel):
         if not value.isdigit():
             raise ValueError("TOTP code must be numeric.")
         return value
+
+
+class BookingConflictDetail(BaseModel):
+    code: str
+    message: str
+    safe_to_retry: bool = False
 
 
 class CancellationCreateRequest(BaseModel):
@@ -108,3 +115,18 @@ class BookingResponse(BaseModel):
 
 class BookingListResponse(BaseModel):
     items: list[BookingResponse]
+
+
+class BookingAttemptReconciliationResponse(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
+    idempotency_key: str
+    deal_id: str
+    payment_method_id: str
+    status: BookingAttemptStatus
+    code: str
+    message: str
+    safe_to_retry: bool
+    booking: BookingResponse | None = None
+    started_at: datetime
+    finished_at: datetime | None = None

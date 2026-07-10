@@ -41,10 +41,18 @@ describe("travelWatchApi booking execution", () => {
     });
   });
 
-  it("maps a completed booking found during reconciliation", async () => {
-    vi.spyOn(apiClient, "get").mockResolvedValue({
-      items: [
-        {
+  it("maps the authenticated attempt reconciliation response", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({
+      idempotency_key: "attempt-key-123",
+      deal_id: "deal-1",
+      payment_method_id: "payment-1",
+      status: "booked",
+      code: "booked",
+      message: "Booking confirmed from the saved booking record.",
+      safe_to_retry: false,
+      started_at: "2030-01-01T00:00:00Z",
+      finished_at: "2030-01-01T00:01:00Z",
+      booking: {
           id: "booking-1",
           deal_id: "deal-1",
           provider: "duffel",
@@ -54,18 +62,24 @@ describe("travelWatchApi booking execution", () => {
           cancellation: null,
           tramp_stamps_awarded: 1,
           tramp_stamp_balance: 4,
-        },
-      ],
+      },
     } as never);
 
-    const booking = await travelWatchApi.getBookingForDeal("deal-1");
+    const attempt = await travelWatchApi.reconcileBookingAttempt("attempt-key-123");
 
-    expect(booking).toEqual(
+    expect(get).toHaveBeenCalledWith("/bookings/attempts/attempt-key-123");
+    expect(attempt).toEqual(
       expect.objectContaining({
-        bookingId: "booking-1",
+        idempotencyKey: "attempt-key-123",
         dealId: "deal-1",
-        trampStampsAwarded: 1,
-        trampStampBalance: 4,
+        paymentMethodId: "payment-1",
+        code: "booked",
+        safeToRetry: false,
+        booking: expect.objectContaining({
+          bookingId: "booking-1",
+          trampStampsAwarded: 1,
+          trampStampBalance: 4,
+        }),
       }),
     );
   });

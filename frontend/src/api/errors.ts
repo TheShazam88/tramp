@@ -9,6 +9,12 @@ const fieldLabels: Record<string, string> = {
   totp_code: "TOTP code",
 };
 
+export interface BookingConflictDetail {
+  code: string;
+  message: string;
+  safeToRetry: boolean;
+}
+
 function validationDetailMessage(detail: unknown) {
   if (typeof detail === "string") {
     return detail.trim();
@@ -34,6 +40,11 @@ function validationDetailMessage(detail: unknown) {
 }
 
 export function getApiErrorMessage(error: unknown, fallback: string) {
+  const conflict = getBookingConflictDetail(error);
+  if (conflict) {
+    return conflict.message;
+  }
+
   if (error instanceof ApiError && error.payload && typeof error.payload === "object") {
     const detail = (error.payload as { detail?: unknown }).detail;
     if (Array.isArray(detail)) {
@@ -55,7 +66,38 @@ export function getApiErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+export function getBookingConflictDetail(error: unknown): BookingConflictDetail | null {
+  if (!(error instanceof ApiError) || error.status !== 409) {
+    return null;
+  }
+  if (!error.payload || typeof error.payload !== "object") {
+    return null;
+  }
+  const detail = (error.payload as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+    return null;
+  }
+  const value = detail as {
+    code?: unknown;
+    message?: unknown;
+    safe_to_retry?: unknown;
+  };
+  if (typeof value.code !== "string" || typeof value.message !== "string") {
+    return null;
+  }
+  return {
+    code: value.code,
+    message: value.message,
+    safeToRetry: value.safe_to_retry === true,
+  };
+}
+
 export function bookingErrorKind(error: unknown): "definite" | "ambiguous" {
+  if (error instanceof ApiError && error.status === 409) {
+    return getBookingConflictDetail(error)?.safeToRetry === true
+      ? "definite"
+      : "ambiguous";
+  }
   return error instanceof ApiError && error.status >= 400 && error.status < 500
     ? "definite"
     : "ambiguous";

@@ -96,6 +96,15 @@ class FakeBookingSession:
         if not hasattr(statement, "column_descriptions"):
             return uuid4()
         entity = statement.column_descriptions[0].get("entity")
+        if entity is BookingAttempt:
+            return next(
+                (
+                    value
+                    for value in reversed(self.added)
+                    if isinstance(value, BookingAttempt)
+                ),
+                None,
+            )
         if entity is Booking:
             self.booking_queries += 1
             if self.booking_queries >= 4:

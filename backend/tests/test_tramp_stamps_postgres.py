@@ -693,7 +693,7 @@ def test_failed_provider_status_persists_only_failed_attempt(
     monkeypatch.setattr(booking_service, "queue_notification", unexpected_side_effect)
     monkeypatch.setattr(booking_service, "push_booking_to_calendar", unexpected_side_effect)
 
-    with pytest.raises(ConflictError, match="provider declined booking"):
+    with pytest.raises(ConflictError) as exc_info:
         booking_service.approve_and_book(
             db=db,
             user=user,
@@ -705,6 +705,8 @@ def test_failed_provider_status_persists_only_failed_attempt(
             idempotency_key=f"failed-provider-{uuid4()}",
             token_service=SimpleNamespace(),
         )
+    assert exc_info.value.code == "provider_failed"
+    assert "provider declined booking" not in str(exc_info.value)
 
     db.expire_all()
     attempts = list(
@@ -716,6 +718,8 @@ def test_failed_provider_status_persists_only_failed_attempt(
     assert attempts[0].response_payload_json == {
         "simulated": False,
         "status": BookingStatus.FAILED.value,
+        "conflict_code": "provider_failed",
+        "safe_to_retry": False,
     }
     assert attempts[0].error_text == "provider declined booking"
     assert db.scalar(
@@ -778,7 +782,11 @@ def test_missing_execution_provenance_is_rejected(
     assert attempt is not None
     assert attempt.status == BookingAttemptStatus.FAILED
     assert attempt.provider_booking_ref == result.provider_booking_ref
-    assert attempt.response_payload_json == result.provider_payload
+    assert attempt.response_payload_json == {
+        **result.provider_payload,
+        "conflict_code": "provider_failed",
+        "safe_to_retry": False,
+    }
     assert db.scalar(
         select(func.count()).select_from(Booking).where(Booking.deal_id == deal.id)
     ) == 0
@@ -836,6 +844,8 @@ def test_pending_provider_status_is_rejected_without_success_side_effects(
     assert attempt.response_payload_json == {
         "simulated": False,
         "status": BookingStatus.PENDING_TICKETING.value,
+        "conflict_code": "pending_ticketing",
+        "safe_to_retry": False,
     }
     assert "automatic finalization is unavailable" in str(attempt.error_text)
     assert db.scalar(
