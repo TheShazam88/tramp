@@ -1,0 +1,152 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - api
+    ports:
+      - "${CADDY_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+        VITE_API_MODE: ${VITE_API_MODE:-live}
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: >
+      /bin/sh -c "alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      APP_NAME: ${APP_NAME:-TRAMP API}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:?Set INITIAL_ADMIN_EMAIL in .env}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?Set INITIAL_ADMIN_PASSWORD in .env}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      APP_SECRET: ${APP_SECRET:?Set a random APP_SECRET of at least 32 bytes in .env}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://travelwatch:travelwatch@postgres:5432/travelwatch}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      ALLOW_SELF_SIGNUP: ${ALLOW_SELF_SIGNUP:-false}
+      KEY_UNLOCK_MODE: ${KEY_UNLOCK_MODE:-master_key}
+      MASTER_KEY_SOURCE: ${MASTER_KEY_SOURCE:-keychain}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-disabled}
+      ALERT_FROM_ADDRESS: ${ALERT_FROM_ADDRESS:-alerts@travel.local}
+      DEFAULT_LUXURY_VS_SAVINGS: ${DEFAULT_LUXURY_VS_SAVINGS:-0.6}
+      DEFAULT_QUALITY_FLOOR: ${DEFAULT_QUALITY_FLOOR:-40}
+      DEFAULT_BAND_TOLERANCE: ${DEFAULT_BAND_TOLERANCE:-0.10}
+      TARGET_PERCENTILE: ${TARGET_PERCENTILE:-25}
+      GLIDE_START_DAYS: ${GLIDE_START_DAYS:-42}
+      GLIDE_END_DAYS: ${GLIDE_END_DAYS:-3}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: celery -A app.scheduler.celery_app.celery_app worker --loglevel=info
+    environment:
+      APP_NAME: ${APP_NAME:-TRAMP API}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:?Set INITIAL_ADMIN_EMAIL in .env}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?Set INITIAL_ADMIN_PASSWORD in .env}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      APP_SECRET: ${APP_SECRET:?Set a random APP_SECRET of at least 32 bytes in .env}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://travelwatch:travelwatch@postgres:5432/travelwatch}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      KEY_UNLOCK_MODE: ${KEY_UNLOCK_MODE:-master_key}
+      MASTER_KEY_SOURCE: ${MASTER_KEY_SOURCE:-keychain}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-disabled}
+      ALERT_FROM_ADDRESS: ${ALERT_FROM_ADDRESS:-alerts@travel.local}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: celery -A app.scheduler.celery_app.celery_app beat --loglevel=info
+    environment:
+      APP_NAME: ${APP_NAME:-TRAMP API}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:?Set INITIAL_ADMIN_EMAIL in .env}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?Set INITIAL_ADMIN_PASSWORD in .env}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      APP_SECRET: ${APP_SECRET:?Set a random APP_SECRET of at least 32 bytes in .env}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://travelwatch:travelwatch@postgres:5432/travelwatch}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      KEY_UNLOCK_MODE: ${KEY_UNLOCK_MODE:-master_key}
+      MASTER_KEY_SOURCE: ${MASTER_KEY_SOURCE:-keychain}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-disabled}
+      ALERT_FROM_ADDRESS: ${ALERT_FROM_ADDRESS:-alerts@travel.local}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-travelwatch}
+      POSTGRES_USER: ${POSTGRES_USER:-travelwatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-travelwatch}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-travelwatch} -d ${POSTGRES_DB:-travelwatch}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  vault:
+    image: hashicorp/vault:1.18
+    restart: unless-stopped
+    profiles:
+      - vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:-travel-watch-dev-token}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    command: server -dev -dev-root-token-id=${VAULT_DEV_ROOT_TOKEN_ID:-travel-watch-dev-token}
+    ports:
+      - "${VAULT_PORT:-8200}:8200"
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  redis_data:

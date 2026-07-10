@@ -1,0 +1,17 @@
+{
+  "name": "TRAMP",
+  "short_name": "TRAMP",
+  "description": "Travel monitoring and secure deal approval.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#050505",
+  "icons": [
+    {
+      "src": "/tramp-app-icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

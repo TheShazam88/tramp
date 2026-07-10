@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Travel Watch — onboarding & alerts</title>
+<style>
+  :root{
+    --canvas:#F6F3EC; --surface:#FFFFFF; --ink:#1F1E1B; --muted:#6E6A63;
+    --line:#E7E1D5; --value:#2C5E8C; --vtint:#E8EEF5; --vdark:#244E76;
+    --luxury:#B98A4B; --ltint:#F4ECDD; --alert:#B4502E; --page:#ECE9E1;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-font-smoothing:antialiased}
+  body{background:var(--page);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5;padding:44px 18px 80px}
+  .serif{font-family:"Iowan Old Style","Palatino Linotype",Georgia,serif}
+  .wrap{max-width:1120px;margin:0 auto}
+  .kicker{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}
+  h1{font-size:clamp(28px,4.5vw,42px);line-height:1.05;letter-spacing:-.01em;margin:10px 0 12px;font-weight:600}
+  .lede{font-size:16px;color:#403D37;max-width:66ch}
+  .sect{margin-top:54px}
+  .secttitle{font-size:13px;font-family:ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--value);border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:24px}
+  .frames{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+  .col{display:flex;flex-direction:column;gap:9px;align-items:center}
+  .caption{font-size:12px;color:var(--muted);max-width:320px;text-align:center}
+  .caption b{color:var(--ink);font-weight:600}
+
+  /* ---- mobile device ---- */
+  .m{width:320px;background:var(--canvas);border:1px solid var(--line);border-radius:26px;box-shadow:0 12px 34px rgba(31,30,27,.10);overflow:hidden}
+  .bar{display:flex;align-items:center;justify-content:space-between;padding:9px 18px 5px;font-size:11px;color:var(--muted)}
+  .scr{padding:14px 16px 20px}
+  .prog{height:4px;background:#E5E0D6;border-radius:99px;margin:2px 0 14px;overflow:hidden}
+  .prog i{display:block;height:100%;background:var(--value)}
+
+  /* ---- desktop browser frame ---- */
+  .d{width:100%;max-width:780px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 14px 40px rgba(31,30,27,.10);overflow:hidden;margin:0 auto}
+  .chrome{display:flex;align-items:center;gap:8px;padding:11px 14px;background:#EFEBE3;border-bottom:1px solid var(--line)}
+  .dts{display:flex;gap:6px}.dts span{width:10px;height:10px;border-radius:50%;background:#D4CEC2}
+  .url{flex:1;text-align:center;font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:4px 10px;max-width:340px;margin:0 auto}
+  .vp{background:var(--canvas);padding:34px 28px}
+  .obcard{max-width:480px;margin:0 auto;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:26px}
+
+  /* stepper */
+  .stepper{display:flex;align-items:center;justify-content:center;gap:0;margin-bottom:20px}
+  .stp{width:9px;height:9px;border-radius:50%;background:#D9D3C8}
+  .stp.cur{background:var(--value);box-shadow:0 0 0 4px var(--vtint)}
+  .stp.done{background:var(--value)}
+  .lnk{width:26px;height:2px;background:#E0DACF}
+  .lnk.done{background:var(--value)}
+
+  /* shared bits */
+  .eye{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--value);font-weight:700}
+  .h{font-size:21px;font-weight:600;letter-spacing:-.01em}
+  .h2{font-size:17px;font-weight:600}
+  .sub{font-size:13px;color:var(--muted);margin-top:5px}
+  .field{margin:13px 0}
+  .lab{font-size:11px;letter-spacing:.04em;color:var(--muted);margin-bottom:5px;display:block}
+  .inp{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:13px}
+  .inp.cv{background:var(--canvas)}
+  .ph{color:#A8A299}.v{color:var(--ink)}
+  .two{display:flex;gap:8px}.two>.inp{flex:1}
+  .btn{display:block;width:100%;text-align:center;padding:12px;border-radius:11px;font-size:14px;font-weight:650;cursor:default;border:none}
+  .go{background:var(--value);color:#fff}.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}.dark{background:var(--ink);color:#fff}
+  .lnkbtn{text-align:center;font-size:12.5px;color:var(--value);margin-top:10px;font-weight:600}
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:6px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+  .pill.sel{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .badge{display:inline-block;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;padding:3px 8px;border-radius:999px}
+  .b-val{background:var(--vtint);color:var(--value)}.b-lux{background:var(--ltint);color:var(--luxury)}.b-alert{background:#F5E7E2;color:var(--alert)}
+  .qr{width:104px;height:104px;border-radius:10px;background:
+      repeating-linear-gradient(0deg,#1F1E1B 0 6px,#fff 6px 12px),
+      repeating-linear-gradient(90deg,rgba(31,30,27,.0) 0 6px,rgba(255,255,255,.55) 6px 12px);
+      border:1px solid var(--line);margin:6px auto 0}
+  .dial{height:34px;border-radius:10px;background:linear-gradient(90deg,var(--vtint),var(--ltint));border:1px solid var(--line);position:relative}
+  .knob{position:absolute;left:58%;top:7px;width:18px;height:18px;border-radius:50%;background:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .dends{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:5px}
+  .check{display:flex;gap:9px;font-size:13px;margin-bottom:7px}.tick{color:var(--value);font-weight:700}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:10px}
+  .row{display:flex;align-items:center;justify-content:space-between}
+  .sm{font-size:12.5px}.xs{font-size:11px}.muted{color:var(--muted)}
+  .note{font-size:11px;color:var(--muted);text-align:center;margin-top:9px}
+
+  /* alerts specifics */
+  .mailhead{font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:9px;margin-bottom:10px}
+  .subj{font-size:13.5px;font-weight:650;color:var(--ink);margin-top:3px}
+  .body{font-size:12px;color:#3a382f;line-height:1.55}
+  .tg{background:#E9EDF0;border-radius:14px;padding:13px;font-size:12px;color:#26303a;line-height:1.5}
+  .tgb{flex:1;text-align:center;background:#fff;border:1px solid #d4dae0;border-radius:9px;padding:9px 4px;font-size:12px;font-weight:600;color:var(--value)}
+  .tgb.no{color:var(--alert)}
+  .lock{background:linear-gradient(160deg,#2b3540,#1d2530);border-radius:18px;padding:22px 16px 26px;color:#fff;min-height:220px;display:flex;flex-direction:column;justify-content:flex-end}
+  .locktime{font-size:34px;font-weight:300;text-align:center;margin-bottom:auto;padding-top:6px}
+  .pushcard{background:rgba(255,255,255,.16);backdrop-filter:blur(4px);border-radius:13px;padding:11px 12px}
+  .pushcard .t{font-size:11px;opacity:.85;letter-spacing:.04em}
+  .pushcard .m2{font-size:12.5px;margin-top:3px;line-height:1.4}
+  .price{font-size:27px;font-weight:700;letter-spacing:-.02em}
+  .strike{font-size:13px;text-decoration:line-through;opacity:.5;font-weight:500;margin-left:7px}
+  .track{height:8px;border-radius:99px;background:#EEE9DE;display:flex;overflow:hidden;margin-top:13px}
+  .fv{height:100%;background:var(--value)}.fl{height:100%;background:var(--luxury)}
+  .succ{width:54px;height:54px;border-radius:50%;background:var(--vtint);color:var(--value);display:flex;align-items:center;justify-content:center;font-size:26px;margin:6px auto 10px}
+  .warnbox{background:#F5E7E2;border:1px solid #E7CFC6;border-radius:11px;padding:11px 12px;font-size:12px;color:#7a3a26}
+  .listrow{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}
+  .listrow:last-child{border-bottom:none}
+  .ic{width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;font-size:14px;background:var(--vtint);color:var(--value)}
+  .ic.warn{background:#F5E7E2;color:var(--alert)}.ic.lux{background:var(--ltint);color:var(--luxury)}
+  .foot{margin-top:48px;padding:20px 22px;border:1px dashed var(--line);border-radius:14px;background:var(--surface);font-size:14px;color:#403D37;max-width:860px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">Travel Watch · onboarding & alerts</div>
+  <h1 class="serif">Full onboarding flow + every alert and response</h1>
+  <p class="lede">Palette A "Atelier" with the azure accent — same visual language as before. Onboarding shown desktop and mobile; then every alert and the screen the user lands on after they respond. Blue = value, champagne = the luxury tier, warm red = needs attention.</p>
+
+  <!-- ================= ONBOARDING — DESKTOP ================= -->
+  <div class="sect">
+    <div class="secttitle">Onboarding · Desktop</div>
+    <div class="frames" style="flex-direction:column;gap:22px">
+
+      <!-- D1 account -->
+      <div class="d"><div class="chrome"><div class="dts"><span></span><span></span><span></span></div><div class="url">travelwatch.app/signup</div></div>
+        <div class="vp"><div class="obcard">
+          <div class="stepper"><div class="stp cur"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div></div>
+          <div class="eye">Step 1 of 6</div>
+          <div class="h serif" style="margin-top:6px">Create your account</div>
+          <div class="sub">Your travel concierge. One login for the whole household.</div>
+          <div class="field"><span class="lab">Email</span><div class="inp cv"><span class="ph">you@email.com</span></div></div>
+          <div class="field"><span class="lab">Password</span><div class="inp cv"><span class="ph">••••••••••</span></div></div>
+          <button class="btn go">Continue</button>
+        </div></div>
+      </div>
+
+      <!-- D2 2FA -->
+      <div class="d"><div class="chrome"><div class="dts"><span></span><span></span><span></span></div><div class="url">travelwatch.app/secure</div></div>
+        <div class="vp"><div class="obcard" style="text-align:center">
+          <div class="stepper"><div class="stp done"></div><div class="lnk done"></div><div class="stp cur"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div></div>
+          <div class="eye">Step 2 of 6</div>
+          <div class="h serif" style="margin-top:6px">Secure your account</div>
+          <div class="sub">Scan with your authenticator app, then enter the 6-digit code. Required because this app can spend money.</div>
+          <div class="qr"></div>
+          <div class="field" style="max-width:240px;margin:16px auto"><div class="inp cv" style="justify-content:center;letter-spacing:.4em">······</div></div>
+          <button class="btn go" style="max-width:240px;margin:0 auto">Verify &amp; continue</button>
+        </div></div>
+      </div>
+
+      <!-- D3 traveller -->
+      <div class="d"><div class="chrome"><div class="dts"><span></span><span></span><span></span></div><div class="url">travelwatch.app/onboarding/you</div></div>
+        <div class="vp"><div class="obcard">
+          <div class="stepper"><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp cur"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div></div>
+          <div class="eye">Step 3 of 6</div>
+          <div class="h serif" style="margin-top:6px">Add yourself as a traveller</div>
+          <div class="sub">Exactly as printed on your passport.</div>
+          <div class="field"><span class="lab">Legal name</span><div class="two"><div class="inp cv"><span class="ph">First</span></div><div class="inp cv"><span class="ph">Last</span></div></div></div>
+          <div class="field"><span class="lab">Date of birth · Nationality</span><div class="two"><div class="inp cv"><span class="ph">DD / MM / YYYY</span></div><div class="inp cv"><span class="ph">Belgium ▾</span></div></div></div>
+          <div class="note" style="text-align:left;margin:4px 0 14px">Passport number can be added later — it's only needed before a flight books.</div>
+          <button class="btn go">Continue</button>
+        </div></div>
+      </div>
+
+      <!-- D4 payment -->
+      <div class="d"><div class="chrome"><div class="dts"><span></span><span></span><span></span></div><div class="url">travelwatch.app/onboarding/payment</div></div>
+        <div class="vp"><div class="obcard">
+          <div class="stepper"><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp cur"></div><div class="lnk"></div><div class="stp"></div><div class="lnk"></div><div class="stp"></div></div>
+          <div class="eye">Step 4 of 6</div>
+          <div class="h serif" style="margin-top:6px">Add a payment method</div>
+          <div class="sub">Encrypted at rest. Used only after you approve a booking — and only with your master key.</div>
+          <div class="field"><span class="lab">Card number</span><div class="inp cv"><span class="ph">•••• •••• •••• ••••</span></div></div>
+          <div class="field"><div class="two"><div class="inp cv"><span class="ph">MM / YY</span></div><div class="inp cv"><span class="ph">CVC</span></div></div></div>
+          <button class="btn go">Add card</button>
+          <div class="lnkbtn">Skip for now</div>
+        </div></div>
+      </div>
+
+      <!-- D5 preferences -->
+      <div class="d"><div class="chrome"><div class="dts"><span></span><span></span><span></span></div><div class="url">travelwatch.app/onboarding/preferences</div></div>
+        <div class="vp"><div class="obcard">
+          <div class="stepper"><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp cur"></div><div class="lnk"></div><div class="stp"></div></div>
+          <div class="eye">Step 5 of 6</div>
+          <div class="h serif" style="margin-top:6px">Set your defaults</div>
+          <div class="sub">These pre-fill every trip. Change any of them per trip.</div>
+          <div class="field"><span class="lab">Home airports</span><div class="inp cv"><span class="v">HND, NRT</span></div></div>
+          <div class="field"><span class="lab">Luxury ⇄ Savings</span><div class="dial"><div class="knob"></div></div><div class="dends"><span>Luxury</span><span>Savings</span></div></div>
+          <div class="field"><span class="lab">Alert me via</span><div class="chips"><span class="pill">Email</span><span class="pill sel">Telegram</span><span class="pill">Both</span></div></div>
+          <button class="btn go">Continue</button>
+        </div></div>
+      </div>
+
+      <!-- D6 done -->
+      <div class="d"><div class="chrome"><div class="dts"><span></span><span></span><span></span></div><div class="url">travelwatch.app/onboarding/done</div></div>
+        <div class="vp"><div class="obcard" style="text-align:center">
+          <div class="stepper"><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp done"></div><div class="lnk done"></div><div class="stp cur"></div></div>
+          <div class="succ">✓</div>
+          <div class="h serif">You're all set</div>
+          <div class="sub">Create your first trip watch and the concierge starts hunting.</div>
+          <div style="text-align:left;max-width:280px;margin:18px auto 16px">
+            <div class="check"><span class="tick">✓</span> Account &amp; 2-factor</div>
+            <div class="check"><span class="tick">✓</span> You as a traveller</div>
+            <div class="check"><span class="tick">✓</span> Payment method</div>
+            <div class="check"><span class="tick">✓</span> Preferences</div>
+          </div>
+          <button class="btn go" style="max-width:300px;margin:0 auto">Create your first watch</button>
+          <div class="lnkbtn">I'll do it later</div>
+        </div></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ================= ONBOARDING — MOBILE ================= -->
+  <div class="sect">
+    <div class="secttitle">Onboarding · Mobile</div>
+    <div class="frames">
+
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="prog"><i style="width:16%"></i></div>
+        <div class="eye">Step 1 of 6</div><div class="h serif" style="margin:6px 0">Create your account</div>
+        <div class="field"><span class="lab">Email</span><div class="inp cv"><span class="ph">you@email.com</span></div></div>
+        <div class="field"><span class="lab">Password</span><div class="inp cv"><span class="ph">••••••••</span></div></div>
+        <button class="btn go">Continue</button>
+      </div></div><div class="caption"><b>1 · Account</b></div></div>
+
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr" style="text-align:center">
+        <div class="prog"><i style="width:33%"></i></div>
+        <div class="eye">Step 2 of 6</div><div class="h serif" style="margin:6px 0">Secure your account</div>
+        <div class="qr"></div>
+        <div class="field" style="max-width:200px;margin:14px auto"><div class="inp cv" style="justify-content:center;letter-spacing:.4em">······</div></div>
+        <button class="btn go">Verify &amp; continue</button>
+      </div></div><div class="caption"><b>2 · Two-factor</b> (TOTP)</div></div>
+
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="prog"><i style="width:50%"></i></div>
+        <div class="eye">Step 3 of 6</div><div class="h serif" style="margin:6px 0">Add yourself</div>
+        <div class="field"><span class="lab">Legal name</span><div class="two"><div class="inp cv"><span class="ph">First</span></div><div class="inp cv"><span class="ph">Last</span></div></div></div>
+        <div class="field"><span class="lab">DOB</span><div class="inp cv"><span class="ph">DD / MM / YYYY</span></div></div>
+        <div class="field"><span class="lab">Nationality</span><div class="inp cv"><span class="ph">Belgium ▾</span></div></div>
+        <div class="note" style="text-align:left">Passport can be added later.</div>
+        <button class="btn go" style="margin-top:10px">Continue</button>
+      </div></div><div class="caption"><b>3 · You as a traveller</b></div></div>
+
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="prog"><i style="width:66%"></i></div>
+        <div class="eye">Step 4 of 6</div><div class="h serif" style="margin:6px 0">Payment method</div>
+        <div class="field"><span class="lab">Card number</span><div class="inp cv"><span class="ph">•••• •••• •••• ••••</span></div></div>
+        <div class="field"><div class="two"><div class="inp cv"><span class="ph">MM / YY</span></div><div class="inp cv"><span class="ph">CVC</span></div></div></div>
+        <div class="note" style="text-align:left">Encrypted · used only after you approve.</div>
+        <button class="btn go" style="margin-top:8px">Add card</button>
+        <div class="lnkbtn">Skip for now</div>
+      </div></div><div class="caption"><b>4 · Payment</b> (skippable)</div></div>
+
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="prog"><i style="width:83%"></i></div>
+        <div class="eye">Step 5 of 6</div><div class="h serif" style="margin:6px 0">Your defaults</div>
+        <div class="field"><span class="lab">Home airports</span><div class="inp cv"><span class="v">HND, NRT</span></div></div>
+        <div class="field"><span class="lab">Luxury ⇄ Savings</span><div class="dial"><div class="knob"></div></div></div>
+        <div class="field"><span class="lab">Alert me via</span><div class="chips"><span class="pill">Email</span><span class="pill sel">Telegram</span><span class="pill">Both</span></div></div>
+        <button class="btn go">Continue</button>
+      </div></div><div class="caption"><b>5 · Preferences</b></div></div>
+
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr" style="text-align:center">
+        <div class="prog"><i style="width:100%"></i></div>
+        <div class="succ">✓</div>
+        <div class="h serif">You're all set</div>
+        <div style="text-align:left;margin:14px 0">
+          <div class="check"><span class="tick">✓</span> Account &amp; 2-factor</div>
+          <div class="check"><span class="tick">✓</span> Traveller</div>
+          <div class="check"><span class="tick">✓</span> Payment</div>
+          <div class="check"><span class="tick">✓</span> Preferences</div>
+        </div>
+        <button class="btn go">Create your first watch</button>
+        <div class="lnkbtn">I'll do it later</div>
+      </div></div><div class="caption"><b>6 · Done</b> → first watch</div></div>
+
+    </div>
+  </div>
+
+  <!-- ================= ALERTS & RESPONSES ================= -->
+  <div class="sect">
+    <div class="secttitle">Alerts & responses</div>
+    <div class="frames">
+
+      <!-- push / lock screen -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="lock">
+          <div class="locktime">9:41</div>
+          <div class="pushcard"><div class="t">✈ TRAVEL WATCH · now</div><div class="m2"><b>Best value found</b> — Tokyo → Singapore, Business ¥118,400 all-in. Tap to review.</div></div>
+        </div>
+      </div></div><div class="caption"><b>Push / lock-screen alert.</b> The nudge; tapping opens the approval screen.</div></div>
+
+      <!-- email -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="h2 serif" style="margin-bottom:10px">Inbox</div>
+        <div class="card">
+          <div class="mailhead">Travel Watch &lt;alerts@…&gt;<div class="subj">✈ Tokyo→Singapore Business ¥118,400 all-in</div></div>
+          <div class="body">Best value for "Tokyo → Singapore":<br>¥118,400 all-in (was ¥206,000) · Luxury 92/100<br>Nonstop 7h25m · ANA · cheapest ~8% in 90d<br>Miles: KLM Flying Blue / AAdvantage<br>Free cancellation within 24h</div>
+          <div class="two" style="margin-top:11px"><button class="btn go" style="padding:10px;font-size:12.5px">Review &amp; approve</button><button class="btn ghost" style="padding:10px;font-size:12.5px">Reject</button></div>
+          <div class="note">Opens a secure page — sign-in + code to book</div>
+        </div>
+      </div></div><div class="caption"><b>Email alert.</b> Signed link; never books from the email itself.</div></div>
+
+      <!-- telegram -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="h2 serif" style="margin-bottom:10px">Telegram</div>
+        <div class="tg">✈ <b>Tokyo → Singapore · Business</b><br>¥118,400 all-in (was ¥206,000) · Luxury 92/100<br>Nonstop 7h25m · ANA · cheapest ~8% / 90d<br>Miles → KLM Flying Blue / AAdvantage
+          <div class="two" style="margin-top:11px"><div class="tgb">✅ Confirm</div><div class="tgb no">❌ Reject</div><div class="tgb">🔍 Details</div></div>
+        </div>
+        <div class="note">Buttons carry a single-use token · booking needs sign-in + code</div>
+      </div></div><div class="caption"><b>Telegram alert.</b> Inline Confirm / Reject / Details.</div></div>
+
+      <!-- approval screen -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="row" style="margin-bottom:10px"><span class="muted xs serif">‹ Approve booking</span><span class="xs" style="color:var(--alert)">expires 27m</span></div>
+        <span class="badge b-val">Best value</span>
+        <div class="eye" style="margin-top:8px">Tokyo → Singapore</div>
+        <div class="h serif">HND · <span style="color:var(--luxury)">Business</span></div>
+        <div class="price serif" style="margin-top:5px">¥118,400<span class="strike">¥206,000</span></div>
+        <div class="xs muted" style="margin-top:3px">all-in · taxes ¥14,200 · bag incl · FX ¥0</div>
+        <div class="track"><div class="fv" style="width:78%"></div><div class="fl" style="width:14%"></div></div>
+        <div class="xs muted" style="margin-top:6px">Luxury 92/100 · Miles → KLM Flying Blue</div>
+        <div class="card" style="margin:13px 0 10px;padding:12px">
+          <div class="lab">Authorise to book</div>
+          <div class="inp" style="margin-bottom:8px"><span class="ph">2-factor code</span></div>
+          <div class="inp"><span class="ph">Master key</span></div>
+        </div>
+        <button class="btn go">Confirm &amp; book</button>
+        <button class="btn ghost" style="margin-top:8px">Reject</button>
+      </div></div><div class="caption"><b>Approval screen.</b> The gate — 2-factor + master key (default mode) before any charge.</div></div>
+
+      <!-- booked -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr" style="text-align:center">
+        <div class="succ">✓</div>
+        <div class="h serif">Booked</div>
+        <div class="sub">Tokyo → Singapore · 12–19 Apr</div>
+        <div class="card" style="text-align:left;margin:16px 0 10px">
+          <div class="row sm"><span class="muted">Confirmation</span><b>ANA · 7K4QF2</b></div>
+          <div class="row sm" style="margin-top:7px"><span class="muted">Charged</span><b>¥118,400</b></div>
+          <div class="row sm" style="margin-top:7px"><span class="muted">Miles to</span><b>KLM Flying Blue</b></div>
+          <div class="row sm" style="margin-top:7px"><span class="muted">Calendar</span><b style="color:var(--value)">Added ✓</b></div>
+        </div>
+        <button class="btn dark">View itinerary</button>
+      </div></div><div class="caption"><b>Response: Booked.</b> Receipt, miles credited, calendar updated.</div></div>
+
+      <!-- reject ack -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="row" style="margin-bottom:12px"><span class="muted xs serif">‹ Reject</span></div>
+        <div class="h2 serif">Why pass on this one?</div>
+        <div class="sub">Helps me find better — pick any that fit.</div>
+        <div class="chips" style="margin:14px 0">
+          <span class="pill">Too pricey</span><span class="pill sel">Layover too long</span><span class="pill">Not luxurious enough</span><span class="pill">Wrong area</span><span class="pill">Other</span>
+        </div>
+        <div class="card" style="background:var(--vtint);border-color:#D5E0EC">
+          <div class="sm"><b>Got it.</b> I'll keep looking and hold out for shorter connections — same value or better. No identical option will come back.</div>
+        </div>
+      </div></div><div class="caption"><b>Response: Reject.</b> Reason chips teach the engine (§8.4).</div></div>
+
+      <!-- booking failed -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="row" style="margin-bottom:12px"><span class="muted xs serif">Booking</span><span class="badge b-alert">Not completed</span></div>
+        <div class="h2 serif">The fare expired before booking</div>
+        <div class="warnbox" style="margin:13px 0">Nothing was charged. The price changed while you were approving — this happens with the cheapest fares.</div>
+        <button class="btn go">Search again now</button>
+        <div class="lnkbtn">Keep watching daily</div>
+      </div></div><div class="caption"><b>Alert + response: Booking failed.</b> Clear "nothing was charged", one-tap retry.</div></div>
+
+      <!-- disruption -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="row" style="margin-bottom:12px"><span class="muted xs serif">Trip update</span><span class="badge b-lux">Schedule change</span></div>
+        <div class="h2 serif">Your ANA flight moved</div>
+        <div class="sub">12 Apr · HND→SIN now departs <b>14:05</b> (was 12:10) — a 2h change.</div>
+        <div class="card" style="margin:14px 0 10px">
+          <div class="sm"><b>Options</b></div>
+          <div class="listrow sm"><div class="ic lux">↺</div><div>Rebook a better-timed flight<br><span class="xs muted">within your fare rules, no fee</span></div></div>
+          <div class="listrow sm"><div class="ic">✓</div><div>Keep the new time</div></div>
+        </div>
+        <button class="btn go">See rebooking options</button>
+      </div></div><div class="caption"><b>Alert + response: Disruption.</b> Never auto-rebooks; offers choices (§8.7).</div></div>
+
+      <!-- cancellation / refund -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="row" style="margin-bottom:12px"><span class="muted xs serif">Cancellation</span><span class="badge b-val">Refund processing</span></div>
+        <div class="h2 serif">Cancelled · refund on the way</div>
+        <div class="card" style="text-align:left;margin:14px 0 10px">
+          <div class="row sm"><span class="muted">Booking</span><b>ANA · 7K4QF2</b></div>
+          <div class="row sm" style="margin-top:7px"><span class="muted">Refund expected</span><b>¥118,400</b></div>
+          <div class="row sm" style="margin-top:7px"><span class="muted">Timing</span><b>5–10 days</b></div>
+          <div class="row sm" style="margin-top:7px"><span class="muted">Status</span><b style="color:var(--value)">Processing</b></div>
+        </div>
+        <div class="note" style="text-align:left">Calendar event removed · we'll confirm when the refund lands.</div>
+      </div></div><div class="caption"><b>Response: Cancellation & refund.</b> Tracked to completion (§8.8).</div></div>
+
+      <!-- daily summary -->
+      <div class="col"><div class="m"><div class="bar"><span>9:41</span><span>●●●</span></div><div class="scr">
+        <div class="h2 serif" style="margin-bottom:4px">Today's watch</div>
+        <div class="sub" style="margin-bottom:8px">2 trips checked · 1 new best</div>
+        <div class="listrow"><div class="ic">✈</div><div class="sm"><b>Tokyo → Singapore</b><br><span class="xs muted">¥124,000 — above your ¥118k target, holding</span></div></div>
+        <div class="listrow"><div class="ic lux">✦</div><div class="sm"><b>Tokyo → Anywhere warm</b><br><span class="xs muted">Bali ¥420k all-in — new best value</span></div></div>
+        <div class="listrow"><div class="ic warn">!</div><div class="sm"><b>Hotelbeds</b><br><span class="xs muted">degraded — others covered it</span></div></div>
+        <div class="note">Quiet hours respected · one digest a day</div>
+      </div></div><div class="caption"><b>Daily summary digest.</b> Optional; what was checked, what changed.</div></div>
+
+    </div>
+  </div>
+
+  <!-- ================= KEY MONEY SCREENS — DESKTOP ================= -->
+  <div class="sect">
+    <div class="secttitle">Approve & confirm · Desktop</div>
+    <div class="frames" style="flex-direction:column;gap:22px">
+
+      <div class="d"><div class="chrome"><div class="dts"><span></span><span></span><span></span></div><div class="url">travelwatch.app/approve/7k4qf2</div></div>
+        <div class="vp"><div class="obcard" style="max-width:560px">
+          <div class="row" style="margin-bottom:14px"><span class="badge b-val">Best value · approve</span><span class="xs" style="color:var(--alert)">expires 27m</span></div>
+          <div class="eye">Tokyo → Singapore</div>
+          <div class="h serif" style="margin-top:4px">HND · <span style="color:var(--luxury)">Business</span> · 12–19 Apr</div>
+          <div style="display:flex;align-items:flex-end;gap:16px;margin-top:8px">
+            <div class="price serif">¥118,400<span class="strike">¥206,000</span></div>
+            <div class="xs muted" style="padding-bottom:6px">all-in · taxes ¥14,200 · bag incl · FX ¥0<br>cheapest ~8% seen in 90d</div>
+          </div>
+          <div class="track" style="max-width:420px"><div class="fv" style="width:78%"></div><div class="fl" style="width:14%"></div></div>
+          <div class="xs muted" style="margin-top:6px">Luxury 92/100 · Nonstop 7h25m · ANA · Miles → KLM Flying Blue (Matt), AAdvantage (TzuHui)</div>
+          <div class="card" style="margin:16px 0 12px;max-width:420px">
+            <div class="lab">Authorise to book</div>
+            <div class="two"><div class="inp"><span class="ph">2-factor code</span></div><div class="inp"><span class="ph">Master key</span></div></div>
+          </div>
+          <div class="two" style="max-width:420px"><button class="btn go">Confirm &amp; book</button><button class="btn ghost">Reject</button></div>
+        </div></div>
+      </div>
+
+      <div class="d"><div class="chrome"><div class="dts"><span></span><span></span><span></span></div><div class="url">travelwatch.app/booking/7k4qf2</div></div>
+        <div class="vp"><div class="obcard" style="max-width:520px;text-align:center">
+          <div class="succ">✓</div>
+          <div class="h serif">Booked</div>
+          <div class="sub">Tokyo → Singapore · Business · 12–19 Apr</div>
+          <div class="card" style="text-align:left;margin:18px auto 0;max-width:380px">
+            <div class="row sm"><span class="muted">Confirmation</span><b>ANA · 7K4QF2</b></div>
+            <div class="row sm" style="margin-top:7px"><span class="muted">Charged</span><b>¥118,400 all-in</b></div>
+            <div class="row sm" style="margin-top:7px"><span class="muted">Miles credited</span><b>KLM Flying Blue</b></div>
+            <div class="row sm" style="margin-top:7px"><span class="muted">Calendar</span><b style="color:var(--value)">Added ✓</b></div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:16px;max-width:380px;margin-left:auto;margin-right:auto"><button class="btn dark">View itinerary</button><button class="btn ghost">Now find a hotel</button></div>
+        </div></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>How it maps to the spec:</b> the onboarding sequence is §7.0 (shown desktop and mobile); the alerts and their landing screens are §8.2 / §8.7 / §8.8 / §12 / §15. Every alert is just a nudge — booking and cancellation only happen on the secure approval screen, gated by 2-factor and (in the default master-key mode) your master key. Same Palette A "Atelier" with the azure accent throughout.
+  </div>
+</div>
+</body>
+</html>
