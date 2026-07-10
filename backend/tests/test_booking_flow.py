@@ -90,6 +90,8 @@ class FakeBookingSession:
                 value.id = uuid4()
 
     def scalar(self, statement):
+        if not hasattr(statement, "column_descriptions"):
+            return uuid4()
         entity = statement.column_descriptions[0].get("entity")
         if entity is Booking:
             self.booking_queries += 1
@@ -111,6 +113,9 @@ class FakeBookingSession:
 
     def commit(self) -> None:
         self.commits += 1
+
+    def rollback(self) -> None:
+        return None
 
     def refresh(self, _value: object) -> None:
         return None
@@ -323,6 +328,7 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
     connector = SimpleNamespace(book_deal=lambda **_kwargs: provider_result)
     db = FakeBookingSession()
     award_calls = 0
+    balance_commit_counts: list[int] = []
     real_award = getattr(tramp_stamp_service, "award_for_live_booking", None)
 
     monkeypatch.setattr(booking_service, "get_mock_data_enabled", lambda *, db: False)
@@ -335,6 +341,11 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
         booking_service,
         "_get_owned_watch_for_deal",
         lambda *, db, user, deal: watch,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "_lock_deal_for_booking",
+        lambda *, db, deal_id: deal,
     )
     monkeypatch.setattr(booking_service, "_require_step_up_auth", lambda **_kwargs: None)
     monkeypatch.setattr(booking_service, "verify_approval_token", lambda **_kwargs: None)
@@ -378,11 +389,9 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
     monkeypatch.setattr(booking_service, "_enqueue_notification_tasks", lambda _items: None)
 
     def current_balance(*, db: FakeBookingSession, user_id) -> int:
-        return sum(
-            value.amount
-            for value in db.added
-            if isinstance(value, TrampStampLedger) and value.user_id == user_id
-        )
+        balance_commit_counts.append(db.commits)
+        assert user_id == user.id
+        return award_calls
 
     def record_award(**kwargs) -> int:
         nonlocal award_calls
@@ -437,4 +446,48 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
     assert replay.idempotent_replay is True
     assert award_calls == 1
     assert db.commits == 1
-    assert sum(isinstance(value, TrampStampLedger) for value in db.added) == 1
+    assert balance_commit_counts == [0, 1]
+
+
+def test_list_bookings_reuses_one_stamp_balance(monkeypatch: pytest.MonkeyPatch) -> None:
+    user = _build_user()
+    bookings = [SimpleNamespace(id=uuid4()), SimpleNamespace(id=uuid4())]
+    db = SimpleNamespace(scalars=lambda _statement: bookings)
+    balance_calls = 0
+    serialized_balances: list[int] = []
+
+    monkeypatch.setattr(booking_service, "get_mock_data_enabled", lambda *, db: True)
+
+    def current_balance(*, db, user_id) -> int:
+        nonlocal balance_calls
+        balance_calls += 1
+        assert user_id == user.id
+        return 7
+
+    def serialize(**kwargs):
+        serialized_balances.append(kwargs["tramp_stamp_balance"])
+        return kwargs["booking"]
+
+    monkeypatch.setattr(booking_service, "stamp_balance", current_balance)
+    monkeypatch.setattr(booking_service, "serialize_booking", serialize)
+
+    assert booking_service.list_bookings(db=db, user=user) == bookings
+    assert balance_calls == 1
+    assert serialized_balances == [7, 7]
+
+
+def test_notification_enqueue_failure_is_nonfatal(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    delivery = SimpleNamespace(id=uuid4())
+
+    def fail_enqueue(*_args, **_kwargs) -> None:
+        raise RuntimeError("broker unavailable")
+
+    monkeypatch.setattr(booking_service.celery_app, "send_task", fail_enqueue)
+
+    booking_service._enqueue_notification_tasks([delivery])
+
+    assert "broker unavailable" in caplog.text
+    assert str(delivery.id) in caplog.text

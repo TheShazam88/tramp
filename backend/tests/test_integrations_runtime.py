@@ -49,8 +49,8 @@ from app.integrations.service import (
     source_is_simulated,
 )
 from app.integrations.types import ResolvedIntegrationConfig
-from app.security.key_provider import get_key_provider
 from app.security.crypto import encrypt_with_app_secret
+from app.security.key_provider import get_key_provider
 from app.watch_mock_adapter import DeterministicMockAdapter
 
 
@@ -226,8 +226,10 @@ def test_simulated_runtime_helpers_detect_mock_and_local_safe_values() -> None:
     assert runtime_connector_is_simulated("live-amadeus") is False
     assert source_is_simulated("mock-duffel") is True
     assert source_is_simulated("live-duffel") is False
+    assert source_is_simulated("live-amadeus+mock-booking") is True
     assert provider_is_simulated("mock-booking") is True
     assert provider_is_simulated("Duffel") is False
+    assert provider_is_simulated("duffel+local-safe-booking") is True
     assert payload_is_simulated({"simulated": True}) is True
     assert payload_is_simulated({"simulated": False}) is False
 
@@ -307,7 +309,9 @@ def test_local_connectors_wrap_existing_mock_adapter() -> None:
     assert hotels
     assert cars
     assert {offer["kind"] for offer in flights} == {"flight"}
-    assert {offer["source"] for offer in flights} == {FLIGHT_SOURCE_BY_INTEGRATION_KEY["flights_amadeus"]}
+    assert {offer["source"] for offer in flights} == {
+        FLIGHT_SOURCE_BY_INTEGRATION_KEY["flights_amadeus"]
+    }
     assert {offer["kind"] for offer in hotels} == {"hotel"}
     assert {offer["kind"] for offer in cars} == {"car"}
 

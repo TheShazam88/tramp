@@ -46,7 +46,9 @@ CATEGORY_DEFINITIONS = {
     },
     "booking": {
         "title": "Booking",
-        "description": "Checkout and booking execution connectors that can reuse shared provider credentials.",
+        "description": (
+            "Checkout and booking execution connectors that can reuse shared provider credentials."
+        ),
     },
     "messaging": {
         "title": "Messaging",
@@ -113,7 +115,12 @@ def list_credential_profiles(
     if provider_keys:
         query = query.where(IntegrationCredentialProfile.provider_key.in_(list(provider_keys)))
     profiles = list(
-        db.scalars(query.order_by(IntegrationCredentialProfile.provider_key, IntegrationCredentialProfile.label))
+        db.scalars(
+            query.order_by(
+                IntegrationCredentialProfile.provider_key,
+                IntegrationCredentialProfile.label,
+            )
+        )
     )
     return [_serialize_credential_profile(db=db, profile=profile) for profile in profiles]
 
@@ -298,14 +305,22 @@ def test_connection(*, db: Session, key: str, actor: User) -> ConnectionTestResu
 
 
 def get_mock_data_enabled(*, db: Session) -> bool:
-    record = db.scalar(select(PlatformIntegration).where(PlatformIntegration.key == RUNTIME_CONFIG_KEY))
+    record = db.scalar(
+        select(PlatformIntegration).where(
+            PlatformIntegration.key == RUNTIME_CONFIG_KEY
+        )
+    )
     if record is None or not record.feature_flags_json:
         return True
     return bool(record.feature_flags_json.get(MOCK_DATA_ENABLED_FLAG, True))
 
 
 def set_mock_data_enabled(*, db: Session, actor: User, enabled: bool) -> bool:
-    record = db.scalar(select(PlatformIntegration).where(PlatformIntegration.key == RUNTIME_CONFIG_KEY))
+    record = db.scalar(
+        select(PlatformIntegration).where(
+            PlatformIntegration.key == RUNTIME_CONFIG_KEY
+        )
+    )
     if record is None:
         record = PlatformIntegration(
             key=RUNTIME_CONFIG_KEY,
@@ -343,24 +358,29 @@ def live_inventory_available(*, db: Session) -> bool:
 
 
 def runtime_connector_is_simulated(runtime_connector: str | None) -> bool:
-    value = (runtime_connector or "").strip().lower()
-    return value.startswith(SIMULATED_CONNECTOR_PREFIXES)
+    return _has_simulated_component(runtime_connector)
 
 
 def source_is_simulated(source: str | None) -> bool:
-    value = (source or "").strip().lower()
-    return value.startswith(SIMULATED_CONNECTOR_PREFIXES)
+    return _has_simulated_component(source)
 
 
 def provider_is_simulated(provider: str | None) -> bool:
-    value = (provider or "").strip().lower()
-    return value.startswith(SIMULATED_CONNECTOR_PREFIXES)
+    return _has_simulated_component(provider)
 
 
 def payload_is_simulated(payload: dict[str, Any] | None) -> bool:
     if not isinstance(payload, dict):
         return False
     return bool(payload.get("simulated"))
+
+
+def _has_simulated_component(value: str | None) -> bool:
+    components = (value or "").split("+")
+    return any(
+        component.strip().lower().startswith(SIMULATED_CONNECTOR_PREFIXES)
+        for component in components
+    )
 
 
 def get_flight_connector(
@@ -469,7 +489,11 @@ def resolve_integration_state(
         has_stored_credentials=bool(stored_overrides),
         updated_at=record.updated_at if record is not None else None,
         updated_by=str(record.updated_by) if record is not None and record.updated_by else None,
-        credential_profile_id=str(record.credential_profile_id) if record and record.credential_profile_id else None,
+        credential_profile_id=(
+            str(record.credential_profile_id)
+            if record and record.credential_profile_id
+            else None
+        ),
         credential_profile_label=linked_profile.label if linked_profile else None,
         credential_fields=list(entry.credential_fields),
         feature_flag_definitions=list(entry.feature_flag_definitions),
@@ -582,7 +606,9 @@ def _validate_credentials(
 ) -> None:
     if key == "flights_amadeus":
         missing = [
-            field for field in ("client_id", "client_secret") if not str(credentials.get(field) or "").strip()
+            field
+            for field in ("client_id", "client_secret")
+            if not str(credentials.get(field) or "").strip()
         ]
         if missing:
             raise ValueError(f"flights_amadeus requires: {', '.join(missing)}.")
@@ -718,7 +744,8 @@ def _parse_profile_id(
     profile = _require_credential_profile(db=db, profile_id=credential_profile_id)
     if allowed_provider_keys and profile.provider_key not in allowed_provider_keys:
         raise ValueError(
-            f"Credential profile provider '{profile.provider_key}' is not compatible with this connector."
+            f"Credential profile provider '{profile.provider_key}' "
+            "is not compatible with this connector."
         )
     return profile.id
 
@@ -815,8 +842,14 @@ def _backfill_shared_profiles(*, db: Session) -> None:
         stored_credentials = _load_stored_credentials(record=record, key=record.key)
         if not stored_credentials:
             continue
-        inferred_provider_key = entry.provider_key or str(stored_credentials.get("provider") or "").strip().lower()
-        if entry.compatible_profile_provider_keys and inferred_provider_key not in entry.compatible_profile_provider_keys:
+        inferred_provider_key = (
+            entry.provider_key
+            or str(stored_credentials.get("provider") or "").strip().lower()
+        )
+        if (
+            entry.compatible_profile_provider_keys
+            and inferred_provider_key not in entry.compatible_profile_provider_keys
+        ):
             continue
         if not inferred_provider_key:
             continue

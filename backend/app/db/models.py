@@ -165,6 +165,7 @@ class CancellationStatus(StrEnum):
 class BookingAttemptStatus(StrEnum):
     STARTED = "started"
     REVALIDATED = "revalidated"
+    PENDING_TICKETING = "pending_ticketing"
     BOOKED = "booked"
     FAILED = "failed"
 
@@ -683,6 +684,12 @@ class Booking(UUIDPrimaryKeyMixin, Base):
 
 class BookingAttempt(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "booking_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_booking_attempts_idempotency_key",
+        ),
+    )
 
     deal_id: Mapped[UUID] = mapped_column(
         SQLUUID(as_uuid=True),
@@ -701,7 +708,7 @@ class BookingAttempt(UUIDPrimaryKeyMixin, Base):
         nullable=False,
         index=True,
     )
-    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[BookingAttemptStatus] = mapped_column(
         Enum(BookingAttemptStatus, name="booking_attempt_status"),
         nullable=False,

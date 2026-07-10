@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.models import Booking, BookingStatus, Deal, TrampStampLedger, User
@@ -39,14 +40,9 @@ def award_for_live_booking(
         return 0
     if provider_is_simulated(booking.provider) or payload_is_simulated(provider_payload):
         return 0
-    existing = db.scalar(
-        select(TrampStampLedger).where(TrampStampLedger.booking_id == booking.id)
-    )
-    if existing is not None:
-        return 0
-
-    db.add(
-        TrampStampLedger(
+    inserted_id = db.scalar(
+        insert(TrampStampLedger)
+        .values(
             user_id=user.id,
             booking_id=booking.id,
             amount=1,
@@ -58,5 +54,9 @@ def award_for_live_booking(
                 "provider": booking.provider,
             },
         )
+        .on_conflict_do_nothing(
+            constraint="uq_tramp_stamp_ledger_booking_id",
+        )
+        .returning(TrampStampLedger.id)
     )
-    return 1
+    return int(inserted_id is not None)

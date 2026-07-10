@@ -150,7 +150,11 @@ def _migration_database_url() -> str:
     return database_url
 
 
-def _run_alembic(database_url: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _run_alembic(
+    database_url: str,
+    *arguments: str,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment.update(
         {
@@ -166,7 +170,7 @@ def _run_alembic(database_url: str, *arguments: str) -> subprocess.CompletedProc
         [sys.executable, "-m", "alembic", *arguments],
         cwd=BACKEND_ROOT,
         env=environment,
-        check=True,
+        check=check,
         capture_output=True,
         text=True,
     )
@@ -246,6 +250,17 @@ def _column_names(database_url: str, table_name: str) -> set[str]:
     engine = create_engine(database_url)
     try:
         return {column["name"] for column in inspect(engine).get_columns(table_name)}
+    finally:
+        engine.dispose()
+
+
+def _unique_constraint_names(database_url: str, table_name: str) -> set[str]:
+    engine = create_engine(database_url)
+    try:
+        return {
+            constraint["name"]
+            for constraint in inspect(engine).get_unique_constraints(table_name)
+        }
     finally:
         engine.dispose()
 
@@ -408,8 +423,16 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _enum_labels(database_url, "integration_environment") == ["TEST", "LIVE"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260710_0004"
+    assert _revision(database_url) == "20260710_0005"
     assert "tramp_stamp_ledger" in _table_names(database_url)
+    assert "PENDING_TICKETING" in _enum_labels(
+        database_url,
+        "booking_attempt_status",
+    )
+    assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
+        database_url,
+        "booking_attempts",
+    )
     _seed_operational_rows(database_url)
 
     second_upgrade = _run_alembic(database_url, "upgrade", "head")
@@ -422,7 +445,57 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _table_names(database_url) == ["alembic_version"]
 
     _run_alembic(database_url, "upgrade", "head")
+    assert _revision(database_url) == "20260710_0005"
+
+
+def test_0005_rejects_duplicate_attempt_claims_without_data_loss() -> None:
+    database_url = _migration_database_url()
+    _reset_database(database_url)
+    _run_alembic(database_url, "upgrade", "20260710_0004")
+    rows = _seed_operational_rows(database_url)
+
+    duplicate_id = uuid4()
+    engine = create_engine(database_url)
+    try:
+        with Session(engine) as db:
+            original = db.get(BookingAttempt, rows["attempt"])
+            assert original is not None
+            duplicate_key = original.idempotency_key
+            db.add(
+                BookingAttempt(
+                    id=duplicate_id,
+                    deal_id=original.deal_id,
+                    booking_id=original.booking_id,
+                    watch_id=original.watch_id,
+                    idempotency_key=duplicate_key,
+                    status=BookingAttemptStatus.STARTED,
+                    started_at=datetime.now(UTC),
+                )
+            )
+            db.commit()
+    finally:
+        engine.dispose()
+
+    result = _run_alembic(database_url, "upgrade", "head", check=False)
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0
+    assert "Duplicate booking attempt idempotency keys prevent migration" in output
+    assert duplicate_key in output
     assert _revision(database_url) == "20260710_0004"
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            assert connection.scalar(
+                text(
+                    "SELECT count(*) FROM booking_attempts "
+                    "WHERE idempotency_key = :idempotency_key"
+                ),
+                {"idempotency_key": duplicate_key},
+            ) == 2
+    finally:
+        engine.dispose()
 
 
 def test_existing_0003_enum_layout_upgrades_for_current_orm() -> None:

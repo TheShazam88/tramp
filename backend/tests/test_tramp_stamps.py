@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from app import tramp_stamp_service
 from app.db.models import BookingStatus, TrampStampLedger
@@ -18,15 +19,16 @@ class FakeScalarSession:
 
 
 class FakeStampSession:
-    def __init__(self, existing: object | None = None) -> None:
-        self.existing = existing
-        self.added: list[object] = []
+    def __init__(self, scalar_result: object | None = None) -> None:
+        self.scalar_result = scalar_result
+        self.statements: list[object] = []
 
-    def scalar(self, _statement):
-        return self.existing
+    def scalar(self, statement):
+        self.statements.append(statement)
+        return self.scalar_result
 
-    def add(self, value: object) -> None:
-        self.added.append(value)
+    def add(self, _value: object) -> None:
+        raise AssertionError("Stamp awards must use an atomic PostgreSQL insert.")
 
 
 def test_stamp_ledger_records_single_stamp_reason() -> None:
@@ -50,14 +52,23 @@ def test_stamp_balance_returns_sum() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "deal_source", "provider", "payload", "existing", "expected"),
+    (
+        "status",
+        "deal_source",
+        "provider",
+        "payload",
+        "scalar_result",
+        "expected",
+        "expected_statements",
+    ),
     [
         pytest.param(
             BookingStatus.TICKETED,
             "live-amadeus",
             "duffel",
             {},
-            None,
+            uuid4(),
+            1,
             1,
             id="ticketed-live-booking",
         ),
@@ -66,7 +77,8 @@ def test_stamp_balance_returns_sum() -> None:
             "live-amadeus",
             "duffel",
             {},
-            None,
+            uuid4(),
+            1,
             1,
             id="booked-live-booking",
         ),
@@ -75,7 +87,8 @@ def test_stamp_balance_returns_sum() -> None:
             "mock-amadeus",
             "duffel",
             {},
-            None,
+            uuid4(),
+            0,
             0,
             id="simulated-deal-source",
         ),
@@ -84,7 +97,8 @@ def test_stamp_balance_returns_sum() -> None:
             "live-amadeus",
             "mock-booking",
             {},
-            None,
+            uuid4(),
+            0,
             0,
             id="simulated-provider",
         ),
@@ -93,7 +107,8 @@ def test_stamp_balance_returns_sum() -> None:
             "live-amadeus",
             "duffel",
             {"simulated": True},
-            None,
+            uuid4(),
+            0,
             0,
             id="simulated-provider-payload",
         ),
@@ -102,7 +117,8 @@ def test_stamp_balance_returns_sum() -> None:
             "live-amadeus",
             "duffel",
             {},
-            None,
+            uuid4(),
+            0,
             0,
             id="failed-booking",
         ),
@@ -111,7 +127,8 @@ def test_stamp_balance_returns_sum() -> None:
             "live-amadeus",
             "duffel",
             {},
-            None,
+            uuid4(),
+            0,
             0,
             id="pending-booking",
         ),
@@ -120,9 +137,10 @@ def test_stamp_balance_returns_sum() -> None:
             "live-amadeus",
             "duffel",
             {},
-            object(),
+            None,
             0,
-            id="existing-booking-ledger",
+            1,
+            id="concurrent-booking-ledger",
         ),
     ],
 )
@@ -131,10 +149,11 @@ def test_stamp_award_eligibility(
     deal_source: str,
     provider: str,
     payload: dict[str, object],
-    existing: object | None,
+    scalar_result: object | None,
     expected: int,
+    expected_statements: int,
 ) -> None:
-    db = FakeStampSession(existing=existing)
+    db = FakeStampSession(scalar_result=scalar_result)
     user = SimpleNamespace(id=uuid4())
     deal = SimpleNamespace(id=uuid4(), watch_id=uuid4(), source=deal_source)
     booking = SimpleNamespace(id=uuid4(), status=status, provider=provider)
@@ -148,16 +167,15 @@ def test_stamp_award_eligibility(
     )
 
     assert awarded == expected
-    assert len(db.added) == expected
-    if expected == 1:
-        award = db.added[0]
-        assert isinstance(award, TrampStampLedger)
-        assert award.user_id == user.id
-        assert award.booking_id == booking.id
-        assert award.amount == 1
-        assert award.reason == "live_booking_completed"
-        assert award.awarded_at.tzinfo is UTC
-        assert award.meta_json == {
+    assert len(db.statements) == expected_statements
+    if expected_statements == 1:
+        params = db.statements[0].compile(dialect=postgresql.dialect()).params
+        assert params["user_id"] == user.id
+        assert params["booking_id"] == booking.id
+        assert params["amount"] == 1
+        assert params["reason"] == "live_booking_completed"
+        assert params["awarded_at"].tzinfo is UTC
+        assert params["meta_json"] == {
             "deal_id": str(deal.id),
             "watch_id": str(deal.watch_id),
             "provider": provider,
