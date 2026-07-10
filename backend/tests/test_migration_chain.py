@@ -265,6 +265,17 @@ def _unique_constraint_names(database_url: str, table_name: str) -> set[str]:
         engine.dispose()
 
 
+def _index_names(database_url: str, table_name: str) -> set[str]:
+    engine = create_engine(database_url)
+    try:
+        return {
+            index["name"]
+            for index in inspect(engine).get_indexes(table_name)
+        }
+    finally:
+        engine.dispose()
+
+
 def _seed_operational_rows(database_url: str) -> dict[str, UUID]:
     ids = {
         "user": uuid4(),
@@ -347,8 +358,8 @@ def _seed_operational_rows(database_url: str) -> dict[str, UUID]:
                 )
             )
             db.flush()
-            db.add(
-                BookingAttempt(
+            db.execute(
+                BookingAttempt.__table__.insert().values(
                     id=ids["attempt"],
                     deal_id=ids["deal"],
                     booking_id=ids["booking"],
@@ -425,13 +436,18 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     _run_alembic(database_url, "upgrade", "head")
     assert _revision(database_url) == "20260710_0005"
     assert "tramp_stamp_ledger" in _table_names(database_url)
-    assert "PENDING_TICKETING" in _enum_labels(
-        database_url,
-        "booking_attempt_status",
+    assert "PENDING_TICKETING" not in _enum_labels(
+        database_url, "booking_attempt_status"
+    )
+    assert "provider_booking_ref" in _column_names(
+        database_url, "booking_attempts"
     )
     assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
         database_url,
         "booking_attempts",
+    )
+    assert "ix_booking_attempts_idempotency_key" not in _index_names(
+        database_url, "booking_attempts"
     )
     _seed_operational_rows(database_url)
 
@@ -455,18 +471,16 @@ def test_0005_rejects_duplicate_attempt_claims_without_data_loss() -> None:
     rows = _seed_operational_rows(database_url)
 
     duplicate_id = uuid4()
+    duplicate_key = f"migration-{rows['attempt']}"
     engine = create_engine(database_url)
     try:
         with Session(engine) as db:
-            original = db.get(BookingAttempt, rows["attempt"])
-            assert original is not None
-            duplicate_key = original.idempotency_key
-            db.add(
-                BookingAttempt(
+            db.execute(
+                BookingAttempt.__table__.insert().values(
                     id=duplicate_id,
-                    deal_id=original.deal_id,
-                    booking_id=original.booking_id,
-                    watch_id=original.watch_id,
+                    deal_id=rows["deal"],
+                    booking_id=rows["booking"],
+                    watch_id=rows["watch"],
                     idempotency_key=duplicate_key,
                     status=BookingAttemptStatus.STARTED,
                     started_at=datetime.now(UTC),
@@ -483,6 +497,9 @@ def test_0005_rejects_duplicate_attempt_claims_without_data_loss() -> None:
     assert "Duplicate booking attempt idempotency keys prevent migration" in output
     assert duplicate_key in output
     assert _revision(database_url) == "20260710_0004"
+    assert "provider_booking_ref" not in _column_names(
+        database_url, "booking_attempts"
+    )
 
     engine = create_engine(database_url)
     try:
@@ -496,6 +513,36 @@ def test_0005_rejects_duplicate_attempt_claims_without_data_loss() -> None:
             ) == 2
     finally:
         engine.dispose()
+
+
+def test_0005_cleans_interrupted_concurrent_index_before_retry() -> None:
+    database_url = _migration_database_url()
+    _reset_database(database_url)
+    _run_alembic(database_url, "upgrade", "20260710_0004")
+    _seed_operational_rows(database_url)
+    temporary_index = "ux_booking_attempts_idempotency_key_claim"
+
+    engine = create_engine(database_url, isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql(
+                f"CREATE UNIQUE INDEX {temporary_index} "
+                "ON booking_attempts (idempotency_key)"
+            )
+    finally:
+        engine.dispose()
+
+    _run_alembic(database_url, "upgrade", "head")
+
+    assert _revision(database_url) == "20260710_0005"
+    assert temporary_index not in _index_names(database_url, "booking_attempts")
+    assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
+        database_url,
+        "booking_attempts",
+    )
+    assert "provider_booking_ref" in _column_names(
+        database_url, "booking_attempts"
+    )
 
 
 def test_existing_0003_enum_layout_upgrades_for_current_orm() -> None:

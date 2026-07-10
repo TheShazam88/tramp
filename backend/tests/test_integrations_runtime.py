@@ -370,6 +370,7 @@ def test_local_booking_and_notification_connectors_are_safe(
         watch=watch,
         payment_method=payment_method,
         booked_at=datetime(2026, 6, 29, 12, 0, tzinfo=UTC),
+        idempotency_key="local-booking-idempotency-key",
     )
     cancelled = booking_connector.cancel_booking(
         booking=booking_deal,
@@ -380,6 +381,8 @@ def test_local_booking_and_notification_connectors_are_safe(
     notification_result = notification_connector.test_connection()
 
     assert booked.provider.startswith("mock-")
+    assert booked.simulated is True
+    assert booked.provider_payload["idempotency_key"] == "local-booking-idempotency-key"
     assert cancelled.refund_received == Decimal("640.00")
     assert notification_result.ok is True
     assert notification_result.warnings

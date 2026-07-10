@@ -165,7 +165,6 @@ class CancellationStatus(StrEnum):
 class BookingAttemptStatus(StrEnum):
     STARTED = "started"
     REVALIDATED = "revalidated"
-    PENDING_TICKETING = "pending_ticketing"
     BOOKED = "booked"
     FAILED = "failed"
 
@@ -715,6 +714,7 @@ class BookingAttempt(UUIDPrimaryKeyMixin, Base):
         default=BookingAttemptStatus.STARTED,
     )
     provider: Mapped[str | None] = mapped_column(String(64))
+    provider_booking_ref: Mapped[str | None] = mapped_column(String(255))
     provider_correlation_id: Mapped[str | None] = mapped_column(String(255))
     request_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     response_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)

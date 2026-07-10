@@ -61,6 +61,7 @@ class DeterministicMockAdapter:
         watch: TripWatch,
         payment_method: PaymentMethod,
         booked_at: datetime,
+        idempotency_key: str,
     ) -> MockBookingResult:
         digest = hashlib.sha256(
             "|".join(
@@ -69,6 +70,7 @@ class DeterministicMockAdapter:
                     deal.fingerprint_hash,
                     str(payment_method.id),
                     payment_method.last4 or "",
+                    idempotency_key,
                 ]
             ).encode("utf-8")
         ).hexdigest()

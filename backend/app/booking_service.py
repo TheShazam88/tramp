@@ -70,55 +70,8 @@ def approve_and_book(
     mock_data_enabled = get_mock_data_enabled(db=db)
     deal = get_owned_deal_record(db=db, user=user, deal_id=deal_id)
     watch = _get_owned_watch_for_deal(db=db, user=user, deal=deal)
+    booking_connector = get_booking_connector(db=db)
     claimed_deal_id = deal.id
-    deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
-    booking_attempt = BookingAttempt(
-        deal_id=deal.id,
-        watch_id=watch.id,
-        idempotency_key=idempotency_key,
-        status=BookingAttemptStatus.STARTED,
-        request_payload_json={
-            "payment_method_id": str(payment_method_id),
-            "watch_id": str(watch.id),
-        },
-        started_at=datetime.now(UTC),
-    )
-    db.add(booking_attempt)
-    try:
-        db.flush()
-    except IntegrityError as exc:
-        constraint_name = _integrity_constraint_name(exc)
-        db.rollback()
-        if constraint_name != IDEMPOTENCY_CLAIM_CONSTRAINT:
-            raise
-        return _resolve_claim_conflict(
-            db=db,
-            user=user,
-            deal_id=claimed_deal_id,
-            idempotency_key=idempotency_key,
-            cause=exc,
-        )
-
-    existing_by_key = db.scalar(select(Booking).where(Booking.idempotency_key == idempotency_key))
-    if existing_by_key is not None:
-        if existing_by_key.deal_id != deal.id:
-            db.rollback()
-            raise ConflictError("Idempotency key is already bound to another booking.")
-        db.rollback()
-        replay = db.scalar(select(Booking).where(Booking.id == existing_by_key.id))
-        if replay is None:
-            raise ConflictError("Existing booking replay could not be loaded.")
-        return serialize_booking(db=db, user=user, booking=replay, idempotent_replay=True)
-
-    existing_booking = db.scalar(select(Booking).where(Booking.deal_id == deal.id))
-    if existing_booking is not None:
-        db.rollback()
-        raise ConflictError("This deal has already been booked.")
-
-    if deal.status != DealStatus.PROPOSED:
-        db.rollback()
-        raise ConflictError("Only proposed deals can be booked.")
-
     _require_step_up_auth(
         user=user,
         totp_code=totp_code,
@@ -131,16 +84,71 @@ def approve_and_book(
         payment_method_id=payment_method_id,
     )
     _revalidate_deal_before_booking(deal=deal)
+
+    claim = _persist_booking_claim(
+        db=db,
+        user=user,
+        deal=deal,
+        watch=watch,
+        payment_method_id=payment_method_id,
+        idempotency_key=idempotency_key,
+    )
+    if isinstance(claim, BookingResponse):
+        return claim
+    booking_attempt = claim
+
+    deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
+    existing_by_key = db.scalar(
+        select(Booking).where(Booking.idempotency_key == idempotency_key)
+    )
+    if existing_by_key is not None:
+        if existing_by_key.deal_id != deal.id:
+            _commit_failed_booking_attempt(
+                db=db,
+                booking_attempt=booking_attempt,
+                error_text="Idempotency key is already bound to another booking.",
+                client_message="Idempotency key is already bound to another booking.",
+            )
+        booking_attempt.booking_id = existing_by_key.id
+        booking_attempt.status = BookingAttemptStatus.BOOKED
+        booking_attempt.finished_at = datetime.now(UTC)
+        db.add(booking_attempt)
+        db.commit()
+        return serialize_booking(
+            db=db,
+            user=user,
+            booking=existing_by_key,
+            idempotent_replay=True,
+        )
+
+    existing_booking = db.scalar(select(Booking).where(Booking.deal_id == deal.id))
+    if existing_booking is not None:
+        _commit_failed_booking_attempt(
+            db=db,
+            booking_attempt=booking_attempt,
+            error_text="This deal has already been booked.",
+            client_message="This deal has already been booked.",
+        )
+
+    if deal.status != DealStatus.PROPOSED:
+        _commit_failed_booking_attempt(
+            db=db,
+            booking_attempt=booking_attempt,
+            error_text="Only proposed deals can be booked.",
+            client_message="Only proposed deals can be booked.",
+        )
+
     booking_attempt.status = BookingAttemptStatus.REVALIDATED
     db.add(booking_attempt)
 
     booked_at = datetime.now(UTC)
     try:
-        provider_result = get_booking_connector(db=db).book_deal(
+        provider_result = booking_connector.book_deal(
             deal=deal,
             watch=watch,
             payment_method=payment_method,
             booked_at=booked_at,
+            idempotency_key=idempotency_key,
         )
     except Exception as exc:  # noqa: BLE001
         booking_attempt.status = BookingAttemptStatus.FAILED
@@ -151,12 +159,26 @@ def approve_and_book(
         raise ConflictError(f"Booking connector failed: {exc}") from exc
 
     booking_attempt.provider = provider_result.provider
+    booking_attempt.provider_booking_ref = provider_result.provider_booking_ref
     booking_attempt.provider_correlation_id = provider_result.provider_correlation_id
     booking_attempt.response_payload_json = provider_result.provider_payload
     booking_attempt.finished_at = datetime.now(UTC)
 
+    execution_simulated = getattr(provider_result, "simulated", None)
+    if execution_simulated is not True and execution_simulated is not False:
+        _commit_failed_booking_attempt(
+            db=db,
+            booking_attempt=booking_attempt,
+            error_text="Booking provider omitted explicit execution provenance.",
+            client_message=(
+                "Booking provider must supply explicit execution provenance; "
+                "the booking was not finalized."
+            ),
+        )
+
     if not mock_data_enabled and (
-        provider_is_simulated(provider_result.provider)
+        execution_simulated
+        or provider_is_simulated(provider_result.provider)
         or payload_is_simulated(provider_result.provider_payload)
     ):
         booking_attempt.status = BookingAttemptStatus.FAILED
@@ -186,9 +208,21 @@ def approve_and_book(
             client_message=error_text,
         )
 
-    if provider_status not in COMPLETED_BOOKING_STATUSES | {
-        BookingStatus.PENDING_TICKETING
-    }:
+    if provider_status == BookingStatus.PENDING_TICKETING:
+        _commit_failed_booking_attempt(
+            db=db,
+            booking_attempt=booking_attempt,
+            error_text=(
+                "Provider returned pending ticketing, but automatic finalization "
+                "is unavailable; manual recovery is required."
+            ),
+            client_message=(
+                "Booking is pending with the provider, but automatic finalization "
+                "is unavailable. Manual recovery is required."
+            ),
+        )
+
+    if provider_status not in COMPLETED_BOOKING_STATUSES:
         _commit_failed_booking_attempt(
             db=db,
             booking_attempt=booking_attempt,
@@ -216,51 +250,36 @@ def approve_and_book(
     db.add(booking)
     db.flush()
     booking_attempt.booking_id = booking.id
-    is_pending = provider_status == BookingStatus.PENDING_TICKETING
-    booking_attempt.status = (
-        BookingAttemptStatus.PENDING_TICKETING
-        if is_pending
-        else BookingAttemptStatus.BOOKED
-    )
+    booking_attempt.status = BookingAttemptStatus.BOOKED
 
-    if is_pending:
-        message_type = "booking.pending_ticketing"
-        notification_subject = "TRAMP booking pending ticketing"
-        notification_body = (
-            f"Your booking for deal {deal.id} is pending ticketing confirmation."
+    db.add(
+        SpendLedger(
+            user_id=user.id,
+            watch_id=watch.id,
+            booking_id=booking.id,
+            amount=provider_result.amount_charged,
+            currency=provider_result.currency,
+            booked_at=effective_booked_at,
         )
-        calendar_detail = "Calendar sync deferred until ticketing completes."
-        audit_action = "booking.pending_ticketing"
-        deal.status = DealStatus.CONFIRMED
-    else:
-        db.add(
-            SpendLedger(
-                user_id=user.id,
-                watch_id=watch.id,
-                booking_id=booking.id,
-                amount=provider_result.amount_charged,
-                currency=provider_result.currency,
-                booked_at=effective_booked_at,
-            )
+    )
+    message_type = "booking.booked"
+    notification_subject = "TRAMP booking confirmed"
+    notification_body = f"Your booking for deal {deal.id} has been confirmed."
+    calendar_detail = "Calendar sync not attempted."
+    try:
+        calendar_result = push_booking_to_calendar(
+            db=db,
+            booking=booking,
+            deal=deal,
+            watch=watch,
         )
-        message_type = "booking.booked"
-        notification_subject = "TRAMP booking confirmed"
-        notification_body = f"Your booking for deal {deal.id} has been confirmed."
-        calendar_detail = "Calendar sync not attempted."
-        try:
-            calendar_result = push_booking_to_calendar(
-                db=db,
-                booking=booking,
-                deal=deal,
-                watch=watch,
-            )
-            calendar_transport = calendar_result.get("transport", "local-safe")
-            calendar_detail = f"Calendar sync complete via {calendar_transport}."
-        except Exception as exc:  # noqa: BLE001
-            calendar_detail = f"Calendar sync failed: {exc}"
-        audit_action = "booking.booked"
-        deal.status = DealStatus.BOOKED
-        watch.status = TripWatchStatus.FULFILLED
+        calendar_transport = calendar_result.get("transport", "local-safe")
+        calendar_detail = f"Calendar sync complete via {calendar_transport}."
+    except Exception as exc:  # noqa: BLE001
+        calendar_detail = f"Calendar sync failed: {exc}"
+    audit_action = "booking.booked"
+    deal.status = DealStatus.BOOKED
+    watch.status = TripWatchStatus.FULFILLED
 
     notification_deliveries = queue_notification(
         db=db,
@@ -297,16 +316,13 @@ def approve_and_book(
 
     consume_approval_token(deal=deal)
     db.add_all([deal, watch, booking, booking_attempt])
-    stamps_awarded = (
-        0
-        if is_pending
-        else award_for_live_booking(
-            db=db,
-            user=user,
-            booking=booking,
-            deal=deal,
-            provider_payload=provider_result.provider_payload,
-        )
+    stamps_awarded = award_for_live_booking(
+        db=db,
+        user=user,
+        booking=booking,
+        deal=deal,
+        provider_payload=provider_result.provider_payload,
+        execution_simulated=execution_simulated,
     )
     response = serialize_booking(
         db=db,
@@ -552,31 +568,97 @@ def _integrity_constraint_name(exc: IntegrityError) -> str | None:
     return getattr(diagnostic, "constraint_name", None)
 
 
+def _persist_booking_claim(
+    *,
+    db: Session,
+    user: User,
+    deal: Deal,
+    watch: TripWatch,
+    payment_method_id: UUID,
+    idempotency_key: str,
+) -> BookingAttempt | BookingResponse:
+    claim_deal_id = deal.id
+    existing_attempt = db.scalar(
+        select(BookingAttempt).where(
+            BookingAttempt.idempotency_key == idempotency_key
+        )
+    )
+    if existing_attempt is not None:
+        return _resolve_claim_conflict(
+            db=db,
+            user=user,
+            deal_id=claim_deal_id,
+            idempotency_key=idempotency_key,
+            cause=None,
+        )
+
+    booking_attempt = BookingAttempt(
+        deal_id=claim_deal_id,
+        watch_id=watch.id,
+        idempotency_key=idempotency_key,
+        status=BookingAttemptStatus.STARTED,
+        request_payload_json={
+            "payment_method_id": str(payment_method_id),
+            "watch_id": str(watch.id),
+        },
+        started_at=datetime.now(UTC),
+    )
+    db.add(booking_attempt)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        constraint_name = _integrity_constraint_name(exc)
+        db.rollback()
+        if constraint_name != IDEMPOTENCY_CLAIM_CONSTRAINT:
+            raise
+        return _resolve_claim_conflict(
+            db=db,
+            user=user,
+            deal_id=claim_deal_id,
+            idempotency_key=idempotency_key,
+            cause=exc,
+        )
+    return booking_attempt
+
+
 def _resolve_claim_conflict(
     *,
     db: Session,
     user: User,
     deal_id: UUID,
     idempotency_key: str,
-    cause: IntegrityError,
+    cause: BaseException | None,
 ) -> BookingResponse:
     existing = db.scalar(
         select(Booking).where(Booking.idempotency_key == idempotency_key)
     )
-    if existing is None:
-        raise ConflictError(
-            "This idempotency key already has a booking attempt without a completed booking."
-        ) from cause
-    if existing.deal_id != deal_id:
-        raise ConflictError(
-            "Idempotency key is already bound to another booking."
-        ) from cause
-    return serialize_booking(
-        db=db,
-        user=user,
-        booking=existing,
-        idempotent_replay=True,
+    if existing is not None:
+        if existing.deal_id != deal_id:
+            raise ConflictError(
+                "Idempotency key is already bound to another booking."
+            ) from cause
+        return serialize_booking(
+            db=db,
+            user=user,
+            booking=existing,
+            idempotent_replay=True,
+        )
+
+    attempt = db.scalar(
+        select(BookingAttempt).where(
+            BookingAttempt.idempotency_key == idempotency_key
+        )
     )
+    if attempt is not None and attempt.deal_id != deal_id:
+        raise ConflictError(
+            "Idempotency key is already bound to another booking attempt."
+        ) from cause
+    attempt_status = attempt.status.value if attempt is not None else "unknown"
+    raise ConflictError(
+        "This idempotency key already has an "
+        f"{attempt_status} booking attempt without a completed booking. "
+        "Automatic provider retry is disabled; manual recovery is required."
+    ) from cause
 
 
 def _lock_deal_for_booking(*, db: Session, deal_id: UUID) -> Deal:

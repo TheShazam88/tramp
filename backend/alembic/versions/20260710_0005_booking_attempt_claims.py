@@ -1,4 +1,4 @@
-"""Serialize booking attempts and track pending ticketing."""
+"""Serialize booking attempts with a durable idempotency claim."""
 
 from __future__ import annotations
 
@@ -10,6 +10,10 @@ revision = "20260710_0005"
 down_revision = "20260710_0004"
 branch_labels = None
 depends_on = None
+
+CONSTRAINT_NAME = "uq_booking_attempts_idempotency_key"
+TEMPORARY_INDEX_NAME = "ux_booking_attempts_idempotency_key_claim"
+LEGACY_INDEX_NAME = "ix_booking_attempts_idempotency_key"
 
 
 def _require_unique_idempotency_keys() -> None:
@@ -36,56 +40,90 @@ def _require_unique_idempotency_keys() -> None:
     )
 
 
+def _constraint_exists() -> bool:
+    return bool(
+        op.get_bind().scalar(
+            sa.text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = :constraint_name
+                      AND conrelid = 'booking_attempts'::regclass
+                )
+                """
+            ),
+            {"constraint_name": CONSTRAINT_NAME},
+        )
+    )
+
+
+def _rebuild_temporary_unique_index() -> None:
+    with op.get_context().autocommit_block():
+        op.execute(
+            sa.text(
+                f'DROP INDEX CONCURRENTLY IF EXISTS "{TEMPORARY_INDEX_NAME}"'
+            )
+        )
+        op.execute(
+            sa.text(
+                f'CREATE UNIQUE INDEX CONCURRENTLY "{TEMPORARY_INDEX_NAME}" '
+                "ON booking_attempts (idempotency_key)"
+            )
+        )
+
+
+def _drop_temporary_index() -> None:
+    with op.get_context().autocommit_block():
+        op.execute(
+            sa.text(
+                f'DROP INDEX CONCURRENTLY IF EXISTS "{TEMPORARY_INDEX_NAME}"'
+            )
+        )
+
+
 def upgrade() -> None:
     _require_unique_idempotency_keys()
     op.execute(
-        "ALTER TYPE booking_attempt_status "
-        "ADD VALUE IF NOT EXISTS 'PENDING_TICKETING' AFTER 'REVALIDATED'"
+        "ALTER TABLE booking_attempts "
+        "ADD COLUMN IF NOT EXISTS provider_booking_ref VARCHAR(255)"
     )
-    op.drop_index(
-        "ix_booking_attempts_idempotency_key",
-        table_name="booking_attempts",
-    )
-    op.create_unique_constraint(
-        "uq_booking_attempts_idempotency_key",
-        "booking_attempts",
-        ["idempotency_key"],
-    )
+    if not _constraint_exists():
+        _rebuild_temporary_unique_index()
+        op.execute(
+            sa.text(
+                f'ALTER TABLE booking_attempts ADD CONSTRAINT "{CONSTRAINT_NAME}" '
+                f'UNIQUE USING INDEX "{TEMPORARY_INDEX_NAME}"'
+            )
+        )
+    else:
+        _drop_temporary_index()
+    op.execute(sa.text(f'DROP INDEX IF EXISTS "{LEGACY_INDEX_NAME}"'))
 
 
 def downgrade() -> None:
-    pending_count = op.get_bind().scalar(
-        sa.text(
-            "SELECT count(*) FROM booking_attempts "
-            "WHERE status::text = 'PENDING_TICKETING'"
+    if _constraint_exists():
+        op.drop_constraint(
+            CONSTRAINT_NAME,
+            "booking_attempts",
+            type_="unique",
         )
-    )
-    if pending_count:
-        raise RuntimeError(
-            "Cannot downgrade booking attempt claims while pending-ticketing attempts exist."
+    with op.get_context().autocommit_block():
+        op.execute(
+            sa.text(
+                f'DROP INDEX CONCURRENTLY IF EXISTS "{TEMPORARY_INDEX_NAME}"'
+            )
         )
-
-    op.drop_constraint(
-        "uq_booking_attempts_idempotency_key",
-        "booking_attempts",
-        type_="unique",
-    )
-    op.create_index(
-        "ix_booking_attempts_idempotency_key",
-        "booking_attempts",
-        ["idempotency_key"],
-    )
+        op.execute(
+            sa.text(f'DROP INDEX CONCURRENTLY IF EXISTS "{LEGACY_INDEX_NAME}"')
+        )
+        op.execute(
+            sa.text(
+                f'CREATE INDEX CONCURRENTLY "{LEGACY_INDEX_NAME}" '
+                "ON booking_attempts (idempotency_key)"
+            )
+        )
     op.execute(
         "ALTER TABLE booking_attempts "
-        "ALTER COLUMN status TYPE text USING status::text"
-    )
-    op.execute("DROP TYPE booking_attempt_status")
-    op.execute(
-        "CREATE TYPE booking_attempt_status AS ENUM "
-        "('STARTED', 'REVALIDATED', 'BOOKED', 'FAILED')"
-    )
-    op.execute(
-        "ALTER TABLE booking_attempts "
-        "ALTER COLUMN status TYPE booking_attempt_status "
-        "USING status::booking_attempt_status"
+        "DROP COLUMN IF EXISTS provider_booking_ref"
     )

@@ -174,6 +174,27 @@ This is intended for local experimentation only.
 
 ## Useful commands
 
+### Booking-claim migration maintenance window
+
+Revision `20260710_0005` creates its unique booking-attempt index concurrently, then attaches
+the database constraint. Stop every old process that can write booking state before upgrading:
+
+```bash
+docker compose stop api worker beat
+docker compose run --rm api alembic upgrade head
+docker compose up -d api worker beat
+```
+
+Keep PostgreSQL running and take the normal database backup before the window. If the migration
+reports duplicate idempotency keys, leave the API and workers stopped, inspect the reported
+`booking_attempts` audit rows, and resolve them manually. The migration never deletes audit
+history.
+
+An interrupted concurrent-index build can leave
+`ux_booking_attempts_idempotency_key_claim` behind. Rerunning the migration safely drops that
+temporary index concurrently and rebuilds it before attaching the constraint. Do not restart old
+API or worker processes between a failed attempt and the retry.
+
 Run migrations manually:
 
 ```bash

@@ -4,7 +4,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from app.db.models import Booking, CancellationStatus, Deal, IntegrationEnvironment, PaymentMethod, TripWatch
+from app.db.models import (
+    Booking,
+    CancellationStatus,
+    Deal,
+    IntegrationEnvironment,
+    PaymentMethod,
+    TripWatch,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,8 +25,8 @@ class IntegrationCatalogEntry:
     compatible_profile_provider_keys: tuple[str, ...] = ()
     default_environment: IntegrationEnvironment = IntegrationEnvironment.TEST
     default_enabled: bool = True
-    credential_fields: tuple["IntegrationCredentialField", ...] = ()
-    feature_flag_definitions: tuple["IntegrationFeatureFlagDefinition", ...] = ()
+    credential_fields: tuple[IntegrationCredentialField, ...] = ()
+    feature_flag_definitions: tuple[IntegrationFeatureFlagDefinition, ...] = ()
     validation_help: str | None = None
 
     @property
@@ -108,6 +115,7 @@ class BookingExecutionResult:
     cancellation_policy_snapshot: dict[str, Any] | None = None
     ticketing_state: str | None = None
     provider_payload: dict[str, Any] | None = None
+    simulated: bool | None = None
 
 
 @dataclass(slots=True)
@@ -152,6 +160,7 @@ class BookingConnector(Protocol):
         watch: TripWatch,
         payment_method: PaymentMethod,
         booked_at: datetime,
+        idempotency_key: str,
     ) -> BookingExecutionResult: ...
 
     def cancel_booking(
@@ -198,6 +207,11 @@ class CalendarConnector(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
-    def cancel_event(self, *, event_id: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]: ...
+    def cancel_event(
+        self,
+        *,
+        event_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
 
     def test_connection(self) -> ConnectionTestResult: ...

@@ -33,8 +33,11 @@ def award_for_live_booking(
     booking: Booking,
     deal: Deal,
     provider_payload: dict[str, object] | None,
+    execution_simulated: bool | None,
 ) -> int:
     if booking.status not in {BookingStatus.TICKETED, BookingStatus.BOOKED}:
+        return 0
+    if execution_simulated is not False:
         return 0
     if source_is_simulated(deal.source):
         return 0

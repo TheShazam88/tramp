@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app import booking_service, tramp_stamp_service
 from app.approval_service import consume_approval_token, issue_approval_token, verify_approval_token
@@ -77,6 +78,8 @@ class FakeBookingSession:
         self.added: list[object] = []
         self.booking_queries = 0
         self.commits = 0
+        self.claimed_keys: set[str] = set()
+        self.committed_attempt_ids: set[int] = set()
 
     def add(self, value: object) -> None:
         self.added.append(value)
@@ -112,6 +115,22 @@ class FakeBookingSession:
         return None
 
     def commit(self) -> None:
+        self.flush()
+        for value in self.added:
+            if not isinstance(value, BookingAttempt):
+                continue
+            object_id = id(value)
+            if object_id in self.committed_attempt_ids:
+                continue
+            if value.idempotency_key in self.claimed_keys:
+                original = SimpleNamespace(
+                    diag=SimpleNamespace(
+                        constraint_name="uq_booking_attempts_idempotency_key"
+                    )
+                )
+                raise IntegrityError("INSERT booking_attempts", {}, original)
+            self.claimed_keys.add(value.idempotency_key)
+            self.committed_attempt_ids.add(object_id)
         self.commits += 1
 
     def rollback(self) -> None:
@@ -203,12 +222,14 @@ def test_mock_booking_result_is_deterministic(monkeypatch: pytest.MonkeyPatch) -
         watch=watch,
         payment_method=payment_method,
         booked_at=booked_at,
+        idempotency_key="mock-booking-12345",
     )
     second = adapter.book_deal(
         deal=deal,
         watch=watch,
         payment_method=payment_method,
         booked_at=booked_at,
+        idempotency_key="mock-booking-12345",
     )
 
     assert first == second
@@ -264,6 +285,7 @@ def test_nonrefundable_mock_booking_is_denied(monkeypatch: pytest.MonkeyPatch) -
         watch=watch,
         payment_method=payment_method,
         booked_at=booked_at,
+        idempotency_key="mock-booking-67890",
     )
     booking = Booking(
         deal_id=deal.id,
@@ -324,8 +346,15 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
         booked_at=booked_at,
         error_text=None,
         provider_payload=provider_payload,
+        simulated=False,
     )
-    connector = SimpleNamespace(book_deal=lambda **_kwargs: provider_result)
+    received_idempotency_keys: list[str] = []
+
+    def book_deal(**kwargs):
+        received_idempotency_keys.append(kwargs["idempotency_key"])
+        return provider_result
+
+    connector = SimpleNamespace(book_deal=book_deal)
     db = FakeBookingSession()
     award_calls = 0
     balance_commit_counts: list[int] = []
@@ -404,7 +433,7 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
         assert attempt.booking_id == booking.id
         assert attempt.provider == provider_result.provider
         assert attempt.response_payload_json == provider_payload
-        assert db.commits == 0
+        assert db.commits == 1
         assert real_award is not None
         return real_award(**kwargs)
 
@@ -445,8 +474,9 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
     assert first.idempotent_replay is False
     assert replay.idempotent_replay is True
     assert award_calls == 1
-    assert db.commits == 1
-    assert balance_commit_counts == [0, 1]
+    assert received_idempotency_keys == ["live-booking-idempotency-key"]
+    assert db.commits == 2
+    assert balance_commit_counts == [1, 2]
 
 
 def test_list_bookings_reuses_one_stamp_balance(monkeypatch: pytest.MonkeyPatch) -> None:

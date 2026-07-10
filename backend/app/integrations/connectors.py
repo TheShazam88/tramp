@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
 import json
 import smtplib
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.db.models import (
     Booking,
-    CancellationStatus,
     Deal,
     IntegrationEnvironment,
     ObservationKind,
@@ -24,9 +23,7 @@ from app.integrations.types import (
     ConnectionTestResult,
     ResolvedIntegrationConfig,
 )
-from app.watch_mock_adapter import (
-    DeterministicMockAdapter,
-)
+from app.watch_mock_adapter import DeterministicMockAdapter
 
 FLIGHT_SOURCE_BY_INTEGRATION_KEY = {
     "flights_amadeus": "mock-amadeus",
@@ -130,12 +127,14 @@ class LocalBookingConnector:
         watch: TripWatch,
         payment_method: PaymentMethod,
         booked_at: datetime,
+        idempotency_key: str,
     ) -> BookingExecutionResult:
         result = DeterministicMockAdapter().book_deal(
             deal=deal,
             watch=watch,
             payment_method=payment_method,
             booked_at=booked_at,
+            idempotency_key=idempotency_key,
         )
         return BookingExecutionResult(
             provider=result.provider,
@@ -151,7 +150,12 @@ class LocalBookingConnector:
             error_text=getattr(result, "error_text", None),
             cancellation_policy_snapshot={"mode": "mock", "refundable": True},
             ticketing_state=result.status.value,
-            provider_payload={"simulated": True, "connector": self.connector_name},
+            provider_payload={
+                "simulated": True,
+                "connector": self.connector_name,
+                "idempotency_key": idempotency_key,
+            },
+            simulated=True,
         )
 
     def cancel_booking(
@@ -326,7 +330,12 @@ class LocalCalendarConnector(CalendarConnector):
             "response": raw,
         }
 
-    def cancel_event(self, *, event_id: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    def cancel_event(
+        self,
+        *,
+        event_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         mode = self._mode()
         if mode != "google_calendar":
             return {
