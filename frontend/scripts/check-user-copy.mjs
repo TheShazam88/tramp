@@ -1,19 +1,10 @@
-import { lstat, readdir, readFile } from "node:fs/promises";
-import { dirname, extname, resolve } from "node:path";
+import { lstat, readdir, readFile, stat } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { TextDecoder } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const forbidden = /[\u2013\u2014]/;
-const textExtensions = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".css",
-  ".html",
-  ".svg",
-  ".json",
-  ".md",
-]);
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const frontendDirectory = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -26,8 +17,9 @@ const requested = process.argv.slice(2);
 const roots = requested.length
   ? requested.map((item) => resolve(item))
   : defaults;
-const files = [];
+const rootFiles = [];
 let hadFilesystemError = false;
+let hadUnscannableRoot = false;
 
 function reportFilesystemError(action, path, error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -35,7 +27,7 @@ function reportFilesystemError(action, path, error) {
   hadFilesystemError = true;
 }
 
-async function collect(path, { explicitFile = false } = {}) {
+async function collect(path, files) {
   let info;
   try {
     info = await lstat(path);
@@ -44,11 +36,19 @@ async function collect(path, { explicitFile = false } = {}) {
     return;
   }
 
-  if (info.isSymbolicLink()) return;
-  if (info.isFile()) {
-    if (explicitFile || textExtensions.has(extname(path).toLowerCase())) {
-      files.push(path);
+  if (info.isSymbolicLink()) {
+    try {
+      info = await stat(path);
+    } catch (error) {
+      reportFilesystemError("inspect symlink target", path, error);
+      return;
     }
+
+    if (info.isDirectory()) return;
+  }
+
+  if (info.isFile()) {
+    files.push(path);
     return;
   }
   if (!info.isDirectory()) return;
@@ -62,41 +62,56 @@ async function collect(path, { explicitFile = false } = {}) {
   }
 
   for (const entry of entries) {
-    if (
-      entry.isSymbolicLink() ||
-      entry.name.startsWith(".") ||
-      entry.name === "node_modules"
-    ) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") {
       continue;
     }
-    await collect(resolve(path, entry.name));
+    await collect(resolve(path, entry.name), files);
   }
 }
 
 for (const root of roots) {
-  await collect(root, { explicitFile: requested.length > 0 });
+  const files = [];
+  await collect(root, files);
+  rootFiles.push({ files, root });
 }
 
 const failures = [];
 let scannedFileCount = 0;
-for (const file of files) {
-  let content;
-  try {
-    content = await readFile(file);
-  } catch (error) {
-    reportFilesystemError("read file", file, error);
-    continue;
+for (const { files, root } of rootFiles) {
+  let rootScannedFileCount = 0;
+  for (const file of files) {
+    let content;
+    try {
+      content = await readFile(file);
+    } catch (error) {
+      reportFilesystemError("read file", file, error);
+      continue;
+    }
+
+    if (content.includes(0)) continue;
+
+    let text;
+    try {
+      text = utf8Decoder.decode(content);
+    } catch {
+      continue;
+    }
+
+    scannedFileCount += 1;
+    rootScannedFileCount += 1;
+    text.split(/\r?\n/).forEach((line, index) => {
+      if (forbidden.test(line)) {
+        failures.push(`${file}:${index + 1}: ${line.trim()}`);
+      }
+    });
   }
 
-  if (content.includes(0)) continue;
-
-  scannedFileCount += 1;
-  const text = content.toString("utf8");
-  text.split(/\r?\n/).forEach((line, index) => {
-    if (forbidden.test(line)) {
-      failures.push(`${file}:${index + 1}: ${line.trim()}`);
-    }
-  });
+  if (requested.length && rootScannedFileCount === 0) {
+    console.error(
+      `No scannable UTF-8 text files found for explicit path "${root}".`,
+    );
+    hadUnscannableRoot = true;
+  }
 }
 
 if (failures.length) {
@@ -104,7 +119,7 @@ if (failures.length) {
   console.error(failures.join("\n"));
 }
 
-if (failures.length || hadFilesystemError) {
+if (failures.length || hadFilesystemError || hadUnscannableRoot) {
   process.exitCode = 1;
 } else {
   console.log(`Copy check passed across ${scannedFileCount} files.`);

@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "npm run check:copy && tsc --noEmit && vite build",
     "check:copy": "node scripts/check-user-copy.mjs",
+    "test:copy": "node --test scripts/check-user-copy.test.mjs",
     "preview": "vite preview",
     "test": "vitest run --exclude \"e2e/**\"",
     "test:browser": "playwright test",
