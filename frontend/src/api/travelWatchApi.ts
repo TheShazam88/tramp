@@ -2725,8 +2725,9 @@ export const travelWatchApi = {
     if (useMockData) {
       return withLatency({
         providerKey,
-        status: "connected",
-        message: "Demo connection passed. Live mode will surface backend availability and access failures directly.",
+        status: "attention",
+        message:
+          "Demo configuration check completed. It does not validate a provider network connection.",
         testedAt: new Date().toISOString(),
       });
     }

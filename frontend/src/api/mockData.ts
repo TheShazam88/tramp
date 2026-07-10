@@ -337,17 +337,20 @@ export const integrationData: IntegrationData = {
     {
       id: "flights",
       title: "Flights",
-      description: "Flight shopping providers that are queried together and ranked by TRAMP.",
+      description:
+        "Flight credential and connector configuration. Current runtime search is deterministic and simulated.",
     },
     {
       id: "hotels",
       title: "Hotels",
-      description: "Hotel and car-search inventory connectors.",
+      description:
+        "Hotel and car credential configuration. Current runtime inventory is deterministic and simulated.",
     },
     {
       id: "booking",
       title: "Booking",
-      description: "Checkout and booking execution connectors that can reuse shared provider credentials.",
+      description:
+        "Booking credential configuration with shared profile reuse. Current execution is simulated and local-safe.",
     },
     {
       id: "messaging",
@@ -362,7 +365,7 @@ export const integrationData: IntegrationData = {
     {
       id: "runtime",
       title: "Runtime",
-      description: "Mock/live runtime behavior and diagnostic controls.",
+      description: "Mock policy, connector configuration, and diagnostic controls.",
     },
   ],
   providers: [
@@ -374,11 +377,11 @@ export const integrationData: IntegrationData = {
       supportsSharedProfile: true,
       compatibleProfileProviderKeys: ["amadeus"],
       environment: "test",
-      status: "connected",
+      status: "attention",
       enabled: true,
       credentialState: {
         configured: true,
-        label: "Configured",
+        label: "Configured locally",
         maskedValue: "amadeus_client_••••M4D2",
       },
       featureFlags: [
@@ -386,7 +389,8 @@ export const integrationData: IntegrationData = {
       ],
       credentialFields: [],
       featureFlagDefinitions: [],
-      detail: "Sandbox credentials are configured for Amadeus metasearch.",
+      detail:
+        "Amadeus credentials are configured locally. Current flight search remains deterministic and simulated.",
     },
     {
       key: "flights_duffel",
@@ -396,11 +400,11 @@ export const integrationData: IntegrationData = {
       supportsSharedProfile: true,
       compatibleProfileProviderKeys: ["duffel"],
       environment: "test",
-      status: "connected",
+      status: "attention",
       enabled: true,
       credentialState: {
         configured: true,
-        label: "Configured",
+        label: "Configured locally",
         maskedValue: "duffel_test_••••7Q9K",
       },
       featureFlags: [
@@ -408,7 +412,8 @@ export const integrationData: IntegrationData = {
       ],
       credentialFields: [],
       featureFlagDefinitions: [],
-      detail: "Duffel test token is ready for the multi-provider flight pool.",
+      detail:
+        "Duffel credentials are configured locally. Current flight search remains deterministic and simulated.",
     },
     {
       key: "flights_kiwi",
@@ -429,7 +434,8 @@ export const integrationData: IntegrationData = {
       ],
       credentialFields: [],
       featureFlagDefinitions: [],
-      detail: "Kiwi Tequila credentials have not been entered yet.",
+      detail:
+        "No invitation-only Kiwi credential is configured. Current flight search remains deterministic and simulated.",
     },
     {
       key: "hotels",
@@ -437,21 +443,22 @@ export const integrationData: IntegrationData = {
       category: "hotels",
       supportsSharedProfile: false,
       compatibleProfileProviderKeys: [],
-      environment: "live",
+      environment: "test",
       status: "attention",
       enabled: true,
       credentialState: {
         configured: true,
-        label: "Configured",
+        label: "Configured locally",
         maskedValue: "hotelbeds_••••2X1B",
       },
       featureFlags: [
-        { label: "Hotels adapter", enabled: true },
-        { label: "Quota alerts", enabled: true },
+        { label: "Hotelbeds credential shape", enabled: true },
+        { label: "Provider network checks", enabled: false },
       ],
       credentialFields: [],
       featureFlagDefinitions: [],
-      detail: "Degraded latency in the last 24 hours; failover still healthy.",
+      detail:
+        "Hotelbeds credentials are configured locally. Current hotel and car search remains deterministic and simulated.",
     },
     {
       key: "booking",
@@ -460,19 +467,20 @@ export const integrationData: IntegrationData = {
       supportsSharedProfile: true,
       compatibleProfileProviderKeys: ["duffel", "amadeus", "kiwi"],
       environment: "test",
-      status: "connected",
+      status: "attention",
       enabled: true,
       credentialProfileId: "profile-duffel-main",
       credentialProfileLabel: "Duffel primary",
       credentialState: {
         configured: true,
-        label: "Configured",
+        label: "Configured locally",
         maskedValue: "shared profile linked",
       },
       featureFlags: [],
       credentialFields: [],
       featureFlagDefinitions: [],
-      detail: "Booking uses the shared Duffel provider profile for local-safe checkout flows.",
+      detail:
+        "Shared Duffel credentials are configured, but booking execution remains simulated and local-safe.",
     },
     {
       key: "notifications",
@@ -530,13 +538,14 @@ export const integrationData: IntegrationData = {
     },
   ],
   featureFlags: [
-    { label: "Auto-book available", enabled: true },
-    { label: "Scrape signal layer", enabled: false },
+    { label: "Simulated booking workflow", enabled: true },
+    { label: "Provider network scraping", enabled: false },
     { label: "Airbnb discovery", enabled: false },
     { label: "Flexible destination mode", enabled: true },
   ],
   healthNotes: [
-    "Adapter status, quota usage, and audit visibility are grouped for an admin-first operational view.",
+    "Credential shapes, local configuration checks, and simulation status are grouped for the admin view.",
+    "Flight, hotel, and booking runtimes remain deterministic and simulated.",
     "UI assumes encrypted credentials are write-only and masked after save.",
   ],
   runtimeSettings: {

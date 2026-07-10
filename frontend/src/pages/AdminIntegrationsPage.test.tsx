@@ -9,6 +9,7 @@ import type {
   IntegrationData,
   IntegrationProvider,
 } from "@/api/types";
+import { integrationData as demoIntegrationData } from "@/api/mockData";
 import { travelWatchApi } from "@/api/travelWatchApi";
 import { AdminIntegrationsPage } from "@/pages/AdminIntegrationsPage";
 
@@ -484,5 +485,84 @@ describe("AdminIntegrationsPage credential guide placement", () => {
       within(connectorCard).queryByLabelText("Duffel access token"),
     ).not.toBeInTheDocument();
     expect(document.querySelectorAll(".credential-guide")).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      category: "hotels",
+      provider: buildProvider({
+        key: "hotels",
+        name: "Hotels",
+        category: "hotels",
+        credentialsMasked: { provider: "hotelbeds" },
+        credentialFields: [
+          { key: "provider", label: "Provider", sensitive: false },
+          { key: "api_key", label: "Hotelbeds API key", sensitive: true },
+          { key: "api_secret", label: "Hotelbeds API secret", sensitive: true },
+        ],
+      }),
+      expected:
+        "Environment selection stores configuration intent only. Current hotel runtime remains deterministic and simulated until a real provider adapter is implemented.",
+    },
+    {
+      category: "booking",
+      provider: buildProvider({
+        key: "booking",
+        name: "Booking",
+        category: "booking",
+        credentialsMasked: { provider: "duffel" },
+        credentialFields: [
+          { key: "provider", label: "Provider", sensitive: false },
+          { key: "access_token", label: "Duffel access token", sensitive: true },
+        ],
+      }),
+      expected:
+        "Credentials can be configured for test or live environments, but current booking execution remains simulated and local-safe.",
+    },
+    {
+      category: "flights",
+      provider: buildProvider({
+        key: "flights_amadeus",
+        name: "Flights · Amadeus",
+        category: "flights",
+        providerKey: "amadeus",
+        supportsSharedProfile: true,
+        compatibleProfileProviderKeys: ["amadeus"],
+        credentialFields: [
+          { key: "client_id", label: "Client ID", sensitive: true },
+        ],
+      }),
+      expected:
+        "Credentials can be configured for test or live environments, but current flight search remains deterministic and simulated until a real provider adapter is implemented.",
+    },
+  ])(
+    "describes the current $category runtime without implying live provider execution",
+    async ({ category, provider, expected }) => {
+      renderCategory(category, [provider]);
+
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+      expect(document.body).not.toHaveTextContent(/live wiring|live-ready/i);
+    },
+  );
+
+  it("keeps demo integration summaries explicit about simulated runtimes", () => {
+    const providers = Object.fromEntries(
+      demoIntegrationData.providers.map((provider) => [provider.key, provider]),
+    );
+    const demoCopy = [
+      ...demoIntegrationData.categories.map((category) => category.description),
+      ...demoIntegrationData.providers.map((provider) => provider.detail),
+      ...demoIntegrationData.featureFlags.map((flag) => flag.label),
+      ...demoIntegrationData.healthNotes,
+    ].join(" ");
+
+    expect(providers.flights_amadeus.detail).toMatch(/deterministic and simulated/i);
+    expect(providers.flights_duffel.detail).toMatch(/deterministic and simulated/i);
+    expect(providers.hotels.detail).toMatch(/deterministic and simulated/i);
+    expect(providers.booking.detail).toMatch(/simulated and local-safe/i);
+    expect(providers.hotels.environment).toBe("test");
+    expect(demoCopy).not.toMatch(
+      /live wiring|live-ready|degraded latency|failover still healthy|auto-book available/i,
+    );
   });
 });

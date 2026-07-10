@@ -278,7 +278,7 @@ export function AdminIntegrationsPage() {
         tone: "value",
         message: mockDataEnabledDraft
           ? "Mock data is enabled. The product may show fallback mock inventory when live data is unavailable."
-          : "Mock data is disabled. No fallback data will be shown anywhere. Users will see real live data only, or empty states.",
+          : "Mock data is disabled. Provider-backed inventory appears only when a real connector supplies it; otherwise users see empty states.",
       });
     },
     onError: (mutationError) => {
@@ -432,7 +432,7 @@ export function AdminIntegrationsPage() {
           <div className={`notice ${mockDataEnabledDraft ? "notice-value" : "notice-alert"}`}>
             {mockDataEnabledDraft
               ? "ON: TRAMP may show simulated fallback data when live provider data is missing."
-              : "OFF: TRAMP must show zero mock data anywhere. Users will see only real live data, or empty states when live data is unavailable."}
+              : "OFF: TRAMP shows provider-backed inventory only when a real connector supplies it; otherwise users see empty states."}
           </div>
           <div className="panel-actions">
             <Button
@@ -814,12 +814,16 @@ export function AdminIntegrationsPage() {
           <Surface className="field-card">
             <p className="field-label">Connection mode</p>
             <strong>{titleize(draft.environment)}</strong>
-            <p className="helper-copy">Switch between sandbox/test behavior, live wiring, or fully off.</p>
+            <p className="helper-copy">
+              Environment selection stores configuration intent only. Current hotel runtime remains deterministic and simulated until a real provider adapter is implemented.
+            </p>
           </Surface>
           <Surface className="field-card">
             <p className="field-label">Inventory source</p>
             <strong>{draft.credentials.provider || "Not set"}</strong>
-            <p className="helper-copy">Choose which hotel provider this connector represents for shopping.</p>
+            <p className="helper-copy">
+              Select the provider credential shape represented by this simulated connector.
+            </p>
           </Surface>
           <Surface className="field-card">
             <p className="field-label">API secret handling</p>
@@ -1206,12 +1210,16 @@ export function AdminIntegrationsPage() {
           <Surface className="field-card">
             <p className="field-label">Execution mode</p>
             <strong>{titleize(draft.environment)}</strong>
-            <p className="helper-copy">Controls whether checkout remains sandbox-safe, live-ready, or fully disabled.</p>
+            <p className="helper-copy">
+              Credentials can be configured for test or live environments, but current booking execution remains simulated and local-safe.
+            </p>
           </Surface>
           <Surface className="field-card">
             <p className="field-label">Provider family</p>
             <strong>{effectiveProviderValue || "Not set"}</strong>
-            <p className="helper-copy">Select the booking provider family and optionally link a shared flight credential profile.</p>
+            <p className="helper-copy">
+              Select the credential shape to store or reuse. This does not enable live booking execution.
+            </p>
           </Surface>
           <Surface className="field-card">
             <p className="field-label">Credential source</p>
@@ -1626,7 +1634,9 @@ export function AdminIntegrationsPage() {
           <Surface className="field-card">
             <p className="field-label">Connection mode</p>
             <strong>{titleize(draft.environment)}</strong>
-            <p className="helper-copy">Use test, live, or off for this specific flight connector.</p>
+            <p className="helper-copy">
+              Credentials can be configured for test or live environments, but current flight search remains deterministic and simulated until a real provider adapter is implemented.
+            </p>
           </Surface>
           <Surface className="field-card">
             <p className="field-label">Credential source</p>
@@ -2004,11 +2014,11 @@ export function AdminIntegrationsPage() {
         />
         {!liveMode ? (
           <div className="notice">
-            Demo mode is still available, but these pages save real backend integration settings for localhost operation.
+            Demo mode is still available, but these pages save persisted backend integration settings for localhost operation.
           </div>
         ) : (
           <div className="notice notice-value">
-            Live mode is active. Integration changes are persisted through the admin API and survive restart.
+            Backend API mode is active. Integration changes are persisted and survive restart. This does not mean a provider connector performs live search or booking.
           </div>
         )}
         {error ? <div className="notice notice-alert">{getErrorMessage(error, "Unable to load admin integrations.")}</div> : null}
