@@ -65,6 +65,13 @@ a.button {
   gap: 0.75rem;
 }
 
+.topbar-brand-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.18rem;
+}
+
 .tramp-brand {
   display: flex;
   flex-direction: column;
@@ -97,13 +104,19 @@ a.button {
 }
 
 .brand-expansion {
-  color: var(--muted);
+  color: var(--value);
   font-family: var(--font-mono);
   font-size: clamp(0.62rem, 2vw, 0.78rem);
   font-weight: 700;
   letter-spacing: 0.25em;
   line-height: 1.2;
   text-transform: uppercase;
+}
+
+.brand-tagline {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .tramp-brand-compact {
@@ -358,6 +371,17 @@ a.button {
   overflow: visible;
 }
 
+.tramp-stamp-artwork-static {
+  animation: none;
+}
+
+.tramp-stamp-artwork-static .tramp-stamp-static-wing,
+.tramp-stamp-artwork-static .tramp-stamp-static-body {
+  transform: none;
+  animation: none;
+  will-change: auto;
+}
+
 .tramp-stamp-overlay {
   position: fixed;
   z-index: 1000;
@@ -386,7 +410,7 @@ a.button {
 
 .tramp-stamp-wing {
   transform-box: view-box;
-  animation: trampStampWingBeat 5s ease-in-out both;
+  animation: trampStampWingSequence 5s ease-in-out both;
   will-change: transform;
 }
 
@@ -445,15 +469,18 @@ a.button {
   5% {
     opacity: 1;
   }
-  39% {
+  34% {
     opacity: 1;
     transform: translateY(-4vh) scale(0.98);
   }
-  46% {
+  42% {
     transform: translateY(1.5vh) scale(1.01);
   }
-  52%,
-  88% {
+  48% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  92% {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
@@ -463,39 +490,37 @@ a.button {
   }
 }
 
-@keyframes trampStampWingBeat {
+@keyframes trampStampWingSequence {
   0%,
   8%,
-  16%,
-  25%,
-  48%,
-  56%,
-  64%,
+  18%,
+  28%,
+  52%,
+  58%,
+  66%,
   100% {
     transform: scaleX(1);
   }
   4%,
-  12%,
-  21% {
+  14%,
+  24% {
     transform: scaleX(0.24);
   }
-  52% {
-    transform: scaleX(0.68);
-  }
-  60% {
-    transform: scaleX(0.78);
+  54%,
+  62% {
+    transform: scaleX(0.72);
   }
 }
 
 @keyframes trampStampBodySettle {
   0%,
-  39% {
+  34% {
     transform: rotate(-2deg);
   }
-  46% {
+  42% {
     transform: rotate(2deg);
   }
-  54%,
+  48%,
   100% {
     transform: rotate(0);
   }
@@ -503,12 +528,12 @@ a.button {
 
 @keyframes trampStampCopyReveal {
   0%,
-  54% {
+  76% {
     opacity: 0;
     transform: translateY(0.8rem) scale(0.96);
   }
-  62%,
-  88% {
+  82%,
+  92% {
     opacity: 1;
     transform: translateY(0) scale(1);
   }

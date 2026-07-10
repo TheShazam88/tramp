@@ -43,12 +43,28 @@ function usePrefersReducedMotion() {
   return prefersReducedMotion;
 }
 
-function ButterflyArtwork({ className }: { className: string }) {
+function ButterflyArtwork({
+  className,
+  variant,
+}: {
+  className: string;
+  variant: "animated" | "static";
+}) {
   const instanceId = useId().replaceAll(":", "");
   const blueGradientId = `${instanceId}-tramp-blue`;
   const blueGlowId = `${instanceId}-tramp-blue-glow`;
   const goldGradientId = `${instanceId}-tramp-gold`;
   const shadowId = `${instanceId}-tramp-shadow`;
+  const leftWingClass =
+    variant === "animated"
+      ? "tramp-stamp-wing tramp-stamp-wing-left"
+      : "tramp-stamp-static-wing";
+  const rightWingClass =
+    variant === "animated"
+      ? "tramp-stamp-wing tramp-stamp-wing-right"
+      : "tramp-stamp-static-wing";
+  const bodyClass =
+    variant === "animated" ? "tramp-stamp-body" : "tramp-stamp-static-body";
 
   const leftWing = (
     <>
@@ -123,7 +139,7 @@ function ButterflyArtwork({ className }: { className: string }) {
 
   return (
     <svg
-      className={className}
+      className={`${className} tramp-stamp-artwork-${variant}`}
       viewBox="0 0 320 300"
       aria-hidden="true"
       focusable="false"
@@ -151,12 +167,12 @@ function ButterflyArtwork({ className }: { className: string }) {
       </defs>
 
       <g filter={`url(#${shadowId})`}>
-        <g className="tramp-stamp-wing tramp-stamp-wing-left">{leftWing}</g>
-        <g className="tramp-stamp-wing tramp-stamp-wing-right">
+        <g className={leftWingClass}>{leftWing}</g>
+        <g className={rightWingClass}>
           <g transform="translate(320 0) scale(-1 1)">{leftWing}</g>
         </g>
 
-        <g className="tramp-stamp-body">
+        <g className={bodyClass}>
           <path
             d="M157 39C150 24 140 18 129 17M163 39C170 24 180 18 191 17"
             fill="none"
@@ -200,7 +216,7 @@ export function TrampStampBadge({ balance }: TrampStampBadgeProps) {
 
   return (
     <div className="tramp-stamp-badge" aria-label={`${label} in your balance`}>
-      <ButterflyArtwork className="tramp-stamp-badge-mark" />
+      <ButterflyArtwork className="tramp-stamp-badge-mark" variant="static" />
       <span>{label}</span>
     </div>
   );
@@ -257,8 +273,8 @@ export function TrampStampButterfly({
       <div
         className={
           prefersReducedMotion
-            ? "tramp-stamp-flight tramp-stamp-flight-reduced"
-            : "tramp-stamp-flight"
+            ? "tramp-stamp-flight tramp-stamp-sequence-strict tramp-stamp-flight-reduced"
+            : "tramp-stamp-flight tramp-stamp-sequence-strict"
         }
         data-testid="tramp-stamp-flight"
         onAnimationEnd={() => {
@@ -267,7 +283,7 @@ export function TrampStampButterfly({
           }
         }}
       >
-        <ButterflyArtwork className="tramp-stamp-butterfly" />
+        <ButterflyArtwork className="tramp-stamp-butterfly" variant="animated" />
         <div className="tramp-stamp-award-copy">
           <strong>+1 TRAMP-Stamp</strong>
           <span>{label}</span>

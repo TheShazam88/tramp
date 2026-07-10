@@ -18,7 +18,7 @@ const authenticatedWorkspace = {
     telegramChatId: null,
     totpEnabled: true,
   },
-  trampStampBalance: 2,
+  trampStampBalance: 0,
 } as ProfileWorkspace;
 
 function renderRoute(path: string, workspace: ProfileWorkspace) {
@@ -37,7 +37,10 @@ function renderRoute(path: string, workspace: ProfileWorkspace) {
       {
         path: "/",
         element: <AppLayout />,
-        children: [{ path: "watches", element: <div>Workspace</div> }],
+        children: [
+          { path: "watches", element: <div>Workspace</div> },
+          { path: "onboarding", element: <div>Onboarding</div> },
+        ],
       },
     ],
     { initialEntries: [path] },
@@ -61,8 +64,21 @@ describe("shared TRAMP branding", () => {
     const wordmark = await screen.findByText("TRAMP");
     expect(wordmark.closest(".tramp-brand")).toBeInTheDocument();
     expect(screen.getByText("TRAVEL AMPLIFIER")).toBeVisible();
-    expect(screen.getByLabelText("2 TRAMP-Stamps in your balance")).toBeVisible();
+    expect(screen.getByText("Autonomous travel booking")).toBeVisible();
+    expect(screen.getByText("Operator console")).toBeVisible();
+    const badge = screen.getByLabelText("0 TRAMP-Stamps in your balance");
+    expect(badge).toBeVisible();
+    expect(badge.querySelector(".tramp-stamp-artwork-static")).toBeInTheDocument();
+    expect(badge.querySelector(".tramp-stamp-wing")).not.toBeInTheDocument();
     expect(screen.queryByRole("img", { name: "TRAMP" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the onboarding header context around the shared wordmark", async () => {
+    renderRoute("/onboarding", authenticatedWorkspace);
+
+    expect(await screen.findByText("Autonomous travel booking")).toBeVisible();
+    expect(screen.getByText("Security and onboarding")).toBeVisible();
+    expect(screen.getByText("TRAVEL AMPLIFIER")).toBeVisible();
   });
 
   it("uses the same shared wordmark on login", async () => {

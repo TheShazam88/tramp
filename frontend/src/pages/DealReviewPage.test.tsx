@@ -271,20 +271,25 @@ describe("DealReviewPage booking execution", () => {
     });
   });
 
-  it("does not trigger the butterfly for a replay that awards zero stamps", async () => {
-    vi.mocked(travelWatchApi.bookDeal).mockResolvedValueOnce({
-      ...approvalResult,
-      trampStampsAwarded: 0,
-      trampStampBalance: 4,
-    });
-    const { user } = renderDealReview();
-    await openAndFillSecureForm(user);
+  it.each(["mock", "replay"])(
+    "does not animate for a %s response that awards zero stamps",
+    async () => {
+      vi.mocked(travelWatchApi.bookDeal).mockResolvedValueOnce({
+        ...approvalResult,
+        trampStampsAwarded: 0,
+        trampStampBalance: 4,
+      });
+      const { container, user } = renderDealReview();
+      await openAndFillSecureForm(user);
 
-    await user.click(screen.getByRole("button", { name: "Book now" }));
+      await user.click(screen.getByRole("button", { name: "Book now" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Booking confirmed.");
-    expect(screen.queryByText("+1 TRAMP-Stamp")).not.toBeInTheDocument();
-  });
+      expect(await screen.findByRole("status")).toHaveTextContent("Booking confirmed.");
+      expect(screen.queryByText("+1 TRAMP-Stamp")).not.toBeInTheDocument();
+      expect(container.querySelector(".tramp-stamp-overlay")).not.toBeInTheDocument();
+      expect(container.querySelector(".tramp-stamp-flight")).not.toBeInTheDocument();
+    },
+  );
 
   it("reuses a verified linked token, consumes its cache, and invalidates every deal variant", async () => {
     const { queryClient, user } = renderDealReview(

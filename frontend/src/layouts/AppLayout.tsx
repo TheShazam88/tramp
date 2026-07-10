@@ -57,7 +57,13 @@ export function AppLayout() {
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-brand">
-          <TrampBrand compact />
+          <div className="topbar-brand-copy">
+            <p className="eyebrow">Autonomous travel booking</p>
+            <TrampBrand compact />
+            <p className="brand-tagline">
+              {isOnboarding ? "Security and onboarding" : "Operator console"}
+            </p>
+          </div>
         </div>
         <div className="button-row topbar-actions">
           <TrampStampBadge balance={data.trampStampBalance} />
