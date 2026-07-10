@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.activity_maintenance import acquire_activity_maintenance_lock
+from app.activity_maintenance import acquire_activity_writer_lock
 from app.db.models import (
     Booking,
     Cancellation,
@@ -38,7 +38,7 @@ def queue_notification(
     force: bool = False,
     integration: ResolvedIntegrationConfig | None = None,
 ) -> list[NotificationDelivery]:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     resolved_integration = integration or get_integration(
         db=db,
         key="notifications",
@@ -80,7 +80,7 @@ def queue_notification(
 
 
 def send_notification_delivery(*, db: Session, delivery_id: UUID) -> NotificationDelivery:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     delivery = db.scalar(select(NotificationDelivery).where(NotificationDelivery.id == delivery_id))
     if delivery is None:
         raise LookupError("Notification delivery not found.")

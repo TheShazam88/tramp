@@ -11,6 +11,7 @@ from app.api.schemas.integrations import (
     AdminTestDataPurgeRequest,
     AdminTestDataPurgeResponse,
 )
+from app.db import models as db_models
 from app.db.models import (
     AuditLog,
     Booking,
@@ -201,6 +202,36 @@ def test_cancellation_restore_preserves_subsequent_booking_and_watch_changes() -
     assert any("subsequently changed" in warning for warning in plan.warnings)
 
 
+def test_unknown_legacy_cancellation_is_retained_and_reported() -> None:
+    watch = _watch(status=TripWatchStatus.FULFILLED)
+    live_deal = _deal(watch=watch, source="live-duffel")
+    live_booking = Booking(
+        id=uuid4(),
+        deal_id=live_deal.id,
+        provider="Duffel",
+        status=BookingStatus.TICKETED,
+    )
+    cancellation = Cancellation(
+        id=uuid4(),
+        booking_id=live_booking.id,
+        status=CancellationStatus.REQUESTED,
+    )
+    cancellation.provenance = "unknown"
+
+    plan = classify_activity(
+        ActivitySnapshot(
+            watches=(watch,),
+            deals=(live_deal,),
+            bookings=(live_booking,),
+            cancellations=(cancellation,),
+        )
+    )
+
+    assert cancellation.id not in plan.cancellation_ids
+    assert plan.unknown_cancellation_count == 1
+    assert any("unknown provenance" in warning for warning in plan.warnings)
+
+
 def test_simulated_booking_restores_retained_live_deal_state() -> None:
     watch = _watch()
     live_deal = _deal(watch=watch, source="live-duffel", status=DealStatus.BOOKED)
@@ -249,6 +280,8 @@ def test_unprovable_simulated_feedback_is_reported_without_guessing() -> None:
     )
 
     assert plan.watch_state_restorations == ()
+    assert feedback.id not in plan.deal_feedback_ids
+    assert simulated_deal.id not in plan.deal_ids
     assert plan.unreverted_feedback_count == 1
     assert any("could not be safely reverted" in warning for warning in plan.warnings)
 
@@ -284,53 +317,8 @@ def test_provable_simulated_feedback_restores_prior_watch_state() -> None:
     assert plan.warnings == ()
 
 
-def test_delete_ids_batches_large_target_sets() -> None:
-    calls: list[object] = []
-
-    class FakeSession:
-        def execute(self, statement):
-            calls.append(statement)
-            return SimpleNamespace(rowcount=1)
-
-    deleted = admin_activity_service._delete_ids(
-        db=FakeSession(),
-        model=Deal,
-        ids=frozenset(uuid4() for _ in range(10_001)),
-    )
-
-    assert len(calls) == 3
-    assert deleted == 3
-
-
-def test_snapshot_loader_uses_projected_columns_not_orm_entities() -> None:
-    statements: list[object] = []
-
-    class NoAutoflush:
-        def __enter__(self):
-            return None
-
-        def __exit__(self, *_args):
-            return None
-
-    class FakeSession:
-        no_autoflush = NoAutoflush()
-
-        def execute(self, statement):
-            statements.append(statement)
-            return []
-
-        def scalars(self, _statement):
-            raise AssertionError("Full ORM scalar materialization is forbidden.")
-
-    snapshot = admin_activity_service._load_activity_snapshot(db=FakeSession())
-
-    assert snapshot == ActivitySnapshot()
-    assert statements
-    assert all(
-        not hasattr(description["expr"], "__table__")
-        for statement in statements
-        for description in statement.column_descriptions
-    )
+def test_production_has_no_whole_table_snapshot_loader() -> None:
+    assert not hasattr(admin_activity_service, "_load_activity_snapshot")
 
 
 def test_cancellation_effect_models_expose_explicit_provenance_links() -> None:
@@ -344,6 +332,12 @@ def test_cancellation_effect_models_expose_explicit_provenance_links() -> None:
     }.issubset(Cancellation.__table__.c.keys())
     assert "cancellation_id" in SpendLedger.__table__.c
     assert "cancellation_id" in NotificationDelivery.__table__.c
+
+
+def test_cancellation_provenance_and_unknown_count_are_explicit() -> None:
+    assert hasattr(db_models, "CancellationProvenance")
+    assert "provenance" in Cancellation.__table__.c
+    assert "unknown_cancellation_count" in AdminTestDataPurgeResponse.model_fields
 
 
 def test_cancellation_connector_and_response_require_execution_provenance() -> None:
@@ -383,9 +377,8 @@ def test_simulated_rejection_records_feedback_without_durable_learning(
     )
     monkeypatch.setattr(
         deal_service,
-        "acquire_activity_maintenance_lock",
+        "acquire_activity_writer_lock",
         lambda session: lock_calls.append(session),
-        raising=False,
     )
     monkeypatch.setattr(
         deal_service,

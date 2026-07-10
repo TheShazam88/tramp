@@ -109,7 +109,7 @@ def _summary_response(
 
 
 @router.get("/test-data/purge-preview", response_model=AdminTestDataPurgeResponse)
-async def preview_test_data_purge_record(
+def preview_test_data_purge_record(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db_session),
 ) -> AdminTestDataPurgeResponse:
@@ -120,15 +120,16 @@ async def preview_test_data_purge_record(
     return AdminTestDataPurgeResponse(
         dry_run=True,
         deleted_counts=plan.deleted_counts,
-        reset_watch_count=len(plan.reset_watch_ids),
+        reset_watch_count=plan.reset_watch_count,
         plan_digest=plan.plan_digest,
         warnings=list(plan.warnings),
         unreverted_feedback_count=plan.unreverted_feedback_count,
+        unknown_cancellation_count=plan.unknown_cancellation_count,
     )
 
 
 @router.post("/test-data/purge", response_model=AdminTestDataPurgeResponse)
-async def purge_test_data_record(
+def purge_test_data_record(
     payload: AdminTestDataPurgeRequest,
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db_session),
@@ -145,10 +146,11 @@ async def purge_test_data_record(
     return AdminTestDataPurgeResponse(
         dry_run=False,
         deleted_counts=result.deleted_counts,
-        reset_watch_count=len(result.reset_watch_ids),
+        reset_watch_count=result.reset_watch_count,
         plan_digest=result.plan_digest,
         warnings=list(result.warnings),
         unreverted_feedback_count=result.unreverted_feedback_count,
+        unknown_cancellation_count=result.unknown_cancellation_count,
     )
 
 

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.db.models import (
     BookingAttemptStatus,
     BookingStatus,
+    CancellationProvenance,
     CancellationStatus,
     DisruptionStatus,
     DisruptionType,
@@ -54,6 +55,7 @@ class CancellationResponse(BaseModel):
     status: CancellationStatus
     provider: str | None = None
     execution_simulated: bool | None = None
+    provenance: CancellationProvenance = CancellationProvenance.UNKNOWN
     requested_at: datetime
     resolved_at: datetime | None
     idempotent_replay: bool = False

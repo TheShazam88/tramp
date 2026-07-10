@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.activity_maintenance import acquire_activity_maintenance_lock
+from app.activity_maintenance import acquire_activity_writer_lock
 from app.db.models import (
     AuditLog,
     Booking,
@@ -26,7 +26,7 @@ def create_disruption(
     kind: DisruptionType = DisruptionType.MANUAL_TEST,
     detail: dict[str, object] | None = None,
 ) -> Disruption:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     disruption = Disruption(
         booking_id=booking.id,
         type=kind,
@@ -73,7 +73,7 @@ def list_disruptions_for_booking(*, db: Session, booking_id: UUID) -> list[Disru
 
 
 def resolve_disruption(*, db: Session, disruption_id: UUID, user: User) -> Disruption:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     disruption = db.scalar(select(Disruption).where(Disruption.id == disruption_id))
     if disruption is None:
         raise LookupError("Disruption not found.")

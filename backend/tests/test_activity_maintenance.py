@@ -17,7 +17,10 @@ from app import (
     tramp_stamp_service,
     watch_service,
 )
-from app.activity_maintenance import acquire_activity_maintenance_lock
+from app.activity_maintenance import (
+    acquire_activity_maintenance_lock,
+    acquire_activity_writer_lock,
+)
 
 
 class FakeSession:
@@ -32,7 +35,7 @@ class FakeSession:
         self.executions.append((statement, parameters))
 
 
-def test_postgres_uses_transaction_advisory_lock_without_committing() -> None:
+def test_postgres_purge_uses_exclusive_transaction_lock() -> None:
     session = FakeSession("postgresql")
 
     acquire_activity_maintenance_lock(session)
@@ -40,6 +43,17 @@ def test_postgres_uses_transaction_advisory_lock_without_committing() -> None:
     assert len(session.executions) == 1
     statement, parameters = session.executions[0]
     assert "pg_advisory_xact_lock" in str(statement)
+    assert parameters == {"lock_key": 6072351297463113037}
+
+
+def test_postgres_writer_uses_shared_transaction_lock() -> None:
+    session = FakeSession("postgresql")
+
+    acquire_activity_writer_lock(session)
+
+    assert len(session.executions) == 1
+    statement, parameters = session.executions[0]
+    assert "pg_advisory_xact_lock_shared" in str(statement)
     assert parameters == {"lock_key": 6072351297463113037}
 
 
@@ -71,4 +85,4 @@ def test_every_purge_racing_activity_writer_uses_shared_lock() -> None:
     )
 
     for writer in writers:
-        assert "acquire_activity_maintenance_lock" in inspect.getsource(writer), writer
+        assert "acquire_activity_writer_lock" in inspect.getsource(writer), writer

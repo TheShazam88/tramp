@@ -164,6 +164,12 @@ class CancellationStatus(StrEnum):
     DENIED = "denied"
 
 
+class CancellationProvenance(StrEnum):
+    SIMULATED = "simulated"
+    LIVE = "live"
+    UNKNOWN = "unknown"
+
+
 class BookingAttemptStatus(StrEnum):
     STARTED = "started"
     REVALIDATED = "revalidated"
@@ -755,6 +761,16 @@ class Cancellation(UUIDPrimaryKeyMixin, Base):
     provider_correlation_id: Mapped[str | None] = mapped_column(String(255))
     provider_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     execution_simulated: Mapped[bool | None] = mapped_column(Boolean)
+    provenance: Mapped[CancellationProvenance] = mapped_column(
+        Enum(
+            CancellationProvenance,
+            name="cancellation_provenance",
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
+        nullable=False,
+        default=CancellationProvenance.UNKNOWN,
+        server_default=CancellationProvenance.UNKNOWN.value,
+    )
     prior_booking_status: Mapped[BookingStatus | None] = mapped_column(
         Enum(BookingStatus, name="booking_status"),
     )

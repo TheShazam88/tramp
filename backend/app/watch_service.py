@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.activity_maintenance import acquire_activity_maintenance_lock
+from app.activity_maintenance import acquire_activity_writer_lock
 from app.api.schemas.watches import (
     CoverageReportResponse,
     CtaActionResponse,
@@ -104,7 +104,7 @@ def list_watches(*, db: Session, user: User) -> list[WatchResponse]:
 
 
 def create_watch(*, db: Session, user: User, payload: WatchCreateRequest) -> WatchResponse:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     traveler_group = _resolve_traveler_group(
         db=db, user=user, traveler_group_id=payload.traveler_group_id
     )
@@ -185,7 +185,7 @@ def get_watch(*, db: Session, user: User, watch_id: UUID) -> WatchResponse:
 def update_watch(
     *, db: Session, user: User, watch_id: UUID, payload: WatchUpdateRequest
 ) -> WatchResponse:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     watch = _get_watch_or_404(db=db, user=user, watch_id=watch_id)
     traveler_group = (
         _resolve_traveler_group(db=db, user=user, traveler_group_id=payload.traveler_group_id)
@@ -278,7 +278,7 @@ def update_watch(
 
 
 def pause_watch(*, db: Session, user: User, watch_id: UUID) -> WatchResponse:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     watch = _get_watch_or_404(db=db, user=user, watch_id=watch_id)
     watch.status = TripWatchStatus.PAUSED
     db.add(watch)
@@ -288,7 +288,7 @@ def pause_watch(*, db: Session, user: User, watch_id: UUID) -> WatchResponse:
 
 
 def resume_watch(*, db: Session, user: User, watch_id: UUID) -> WatchResponse:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     watch = _get_watch_or_404(db=db, user=user, watch_id=watch_id)
     watch.status = TripWatchStatus.ACTIVE
     db.add(watch)
@@ -413,7 +413,7 @@ def build_watch_draft(
 
 
 def search_now(*, db: Session, user: User, watch_id: UUID) -> SearchNowResponse:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     watch = _get_watch_or_404(db=db, user=user, watch_id=watch_id)
     travelers = _travelers_for_watch(db=db, watch=watch, user=user)
     observed_at = datetime.now(UTC)

@@ -7,7 +7,18 @@ ACTIVITY_MAINTENANCE_LOCK_KEY = 6072351297463113037
 
 
 def acquire_activity_maintenance_lock(db: Session) -> None:
-    """Serialize purge snapshots and activity writes in the current transaction."""
+    """Acquire the exclusive purge lock for the current transaction."""
+
+    _acquire_postgres_lock(db, "pg_advisory_xact_lock")
+
+
+def acquire_activity_writer_lock(db: Session) -> None:
+    """Acquire a shared writer lock for the current transaction."""
+
+    _acquire_postgres_lock(db, "pg_advisory_xact_lock_shared")
+
+
+def _acquire_postgres_lock(db: Session, function_name: str) -> None:
 
     get_bind = getattr(db, "get_bind", None)
     if get_bind is None:
@@ -16,6 +27,6 @@ def acquire_activity_maintenance_lock(db: Session) -> None:
     if bind.dialect.name != "postgresql":
         return
     db.execute(
-        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+        text(f"SELECT {function_name}(:lock_key)"),
         {"lock_key": ACTIVITY_MAINTENANCE_LOCK_KEY},
     )

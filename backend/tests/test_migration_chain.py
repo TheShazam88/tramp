@@ -49,6 +49,9 @@ POSTGRES_RUNNER = BACKEND_ROOT / "scripts" / "test-migrations.sh"
 INITIAL_REVISION = MIGRATION_ROOT / "20260629_0001_initial_schema.py"
 RECOVERY_REVISION = MIGRATION_ROOT / "20260710_0007_booking_recovery_required.py"
 PROVENANCE_REVISION = MIGRATION_ROOT / "20260710_0008_cancellation_provenance.py"
+CANCELLATION_CLASSIFICATION_REVISION = (
+    MIGRATION_ROOT / "20260710_0009_cancellation_classification.py"
+)
 
 PRE_V2_TABLES = {
     "audit_log",
@@ -86,12 +89,14 @@ POST_V1_COLUMNS = {
     "execution_simulated",
     "prior_booking_status",
     "prior_watch_status",
+    "provenance",
     "provider_payload_json",
     "provider_correlation_id",
     "ticketing_state",
 }
 POST_V1_ENUMS = {
     "booking_attempt_status",
+    "cancellation_provenance",
     "disruption_status",
     "disruption_type",
     "notification_delivery_status",
@@ -203,6 +208,15 @@ def test_0008_cancellation_provenance_is_fully_reversible() -> None:
     }
     assert added_columns == expected_columns
     assert dropped_columns == expected_columns
+
+
+def test_0009_cancellation_classification_is_reversible() -> None:
+    source = CANCELLATION_CLASSIFICATION_REVISION.read_text()
+
+    assert 'revision = "20260710_0009"' in source
+    assert 'down_revision = "20260710_0008"' in source
+    assert 'op.add_column("cancellations"' in source
+    assert 'op.drop_column("cancellations", "provenance")' in source
 
 
 def _migration_database_url() -> str:
@@ -502,7 +516,7 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _enum_labels(database_url, "integration_environment") == ["TEST", "LIVE"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260710_0008"
+    assert _revision(database_url) == "20260710_0009"
     assert "tramp_stamp_ledger" in _table_names(database_url)
     assert "PENDING_TICKETING" not in _enum_labels(
         database_url, "booking_attempt_status"
@@ -533,7 +547,104 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _table_names(database_url) == ["alembic_version"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260710_0008"
+    assert _revision(database_url) == "20260710_0009"
+
+
+def test_0009_backfills_simulated_parent_and_marks_live_parent_unknown() -> None:
+    database_url = _migration_database_url()
+    _reset_database(database_url)
+    _run_alembic(database_url, "upgrade", "20260710_0008")
+    rows = _seed_operational_rows(database_url)
+    simulated_deal_id = uuid4()
+    simulated_booking_id = uuid4()
+    simulated_cancellation_id = uuid4()
+    unknown_cancellation_id = uuid4()
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO deals (
+                        id, watch_id, kind, source, total_price, currency,
+                        framing, fingerprint_hash, status
+                    ) VALUES (
+                        :id, :watch_id, 'flight', 'mock-duffel', 123.45, 'USD',
+                        'BEST_VALUE', :fingerprint, 'BOOKED'
+                    )
+                    """
+                ),
+                {
+                    "id": simulated_deal_id,
+                    "watch_id": rows["watch"],
+                    "fingerprint": f"legacy-simulated-{simulated_deal_id}",
+                },
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO bookings (
+                        id, deal_id, provider, status, idempotency_key,
+                        loyalty_manual_followup
+                    ) VALUES (
+                        :id, :deal_id, 'mock-booking', 'TICKETED',
+                        :idempotency_key, false
+                    )
+                    """
+                ),
+                {
+                    "id": simulated_booking_id,
+                    "deal_id": simulated_deal_id,
+                    "idempotency_key": f"legacy-simulated-{simulated_booking_id}",
+                },
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO cancellations (
+                        id, booking_id, status, requested_at
+                    ) VALUES
+                        (:simulated_id, :simulated_booking_id, 'REQUESTED', now()),
+                        (:unknown_id, :live_booking_id, 'REQUESTED', now())
+                    """
+                ),
+                {
+                    "simulated_id": simulated_cancellation_id,
+                    "simulated_booking_id": simulated_booking_id,
+                    "unknown_id": unknown_cancellation_id,
+                    "live_booking_id": rows["booking"],
+                },
+            )
+    finally:
+        engine.dispose()
+
+    _run_alembic(database_url, "upgrade", "head")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            provenance = {
+                row.id: row.provenance
+                for row in connection.execute(
+                    text(
+                        "SELECT id, provenance FROM cancellations "
+                        "WHERE id IN (:simulated_id, :unknown_id)"
+                    ),
+                    {
+                        "simulated_id": simulated_cancellation_id,
+                        "unknown_id": unknown_cancellation_id,
+                    },
+                )
+            }
+    finally:
+        engine.dispose()
+
+    assert provenance[simulated_cancellation_id] == "simulated"
+    assert provenance[unknown_cancellation_id] == "unknown"
+
+    _run_alembic(database_url, "downgrade", "20260710_0008")
+    assert "provenance" not in _column_names(database_url, "cancellations")
 
 
 def test_0005_rejects_duplicate_attempt_claims_without_data_loss() -> None:
@@ -648,7 +759,7 @@ def test_0005_cleans_interrupted_concurrent_index_before_retry() -> None:
 
     _run_alembic(database_url, "upgrade", "head")
 
-    assert _revision(database_url) == "20260710_0008"
+    assert _revision(database_url) == "20260710_0009"
     assert temporary_index not in _index_names(database_url, "booking_attempts")
     assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
         database_url,

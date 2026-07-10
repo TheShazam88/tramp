@@ -115,6 +115,7 @@ class AdminTestDataPurgeResponse(BaseModel):
     plan_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     warnings: list[str]
     unreverted_feedback_count: int
+    unknown_cancellation_count: int
 
 
 class AdminIntegrationsSummaryResponse(BaseModel):

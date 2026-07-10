@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -256,7 +257,7 @@ def test_classification_removes_only_proven_simulated_activity() -> None:
     plan = classify_activity(snapshot)
 
     assert plan.observation_ids == frozenset({mock_observation.id})
-    assert plan.deal_ids == frozenset({mock_deal.id, mixed_mock_deal.id})
+    assert plan.deal_ids == frozenset({mixed_mock_deal.id})
     assert plan.booking_ids == frozenset(
         {
             mock_booking.id,
@@ -270,9 +271,9 @@ def test_classification_removes_only_proven_simulated_activity() -> None:
         {linked_notification.id, manual_notification.id}
     )
     assert plan.spend_ledger_ids == frozenset({linked_spend.id})
-    assert plan.deal_feedback_ids == frozenset({selected_feedback.id})
-    assert plan.suppressed_attribute_ids == frozenset({selected_suppression.id})
-    assert plan.rejected_fingerprint_ids == frozenset({selected_rejection.id})
+    assert plan.deal_feedback_ids == frozenset()
+    assert plan.suppressed_attribute_ids == frozenset()
+    assert plan.rejected_fingerprint_ids == frozenset()
     assert plan.audit_log_ids == frozenset({selected_audit.id, manual_audit.id})
     assert plan.price_stat_ids == frozenset({price_stat.id})
     assert plan.reset_watch_ids == frozenset({mock_only_watch.id})
@@ -287,6 +288,7 @@ def test_classification_removes_only_proven_simulated_activity() -> None:
     assert live_rejection.id not in plan.rejected_fingerprint_ids
     assert live_audit.id not in plan.audit_log_ids
     assert mixed_watch.id not in plan.reset_watch_ids
+    assert plan.unreverted_feedback_count == 1
 
 
 def test_classification_fails_closed_for_ambiguous_learning_state() -> None:
@@ -354,11 +356,11 @@ def test_preview_is_nonmutating(monkeypatch: pytest.MonkeyPatch) -> None:
     snapshot = ActivitySnapshot()
     calls: list[object] = []
 
-    def load_snapshot(*, db: object) -> ActivitySnapshot:
-        calls.append(db)
-        return snapshot
-
-    monkeypatch.setattr(activity_service, "_load_activity_snapshot", load_snapshot)
+    monkeypatch.setattr(
+        activity_service,
+        "_build_database_plan",
+        lambda *, db: (calls.append(db), classify_activity(snapshot))[1],
+    )
 
     plan = preview_test_data_purge(db=session)
 
@@ -418,6 +420,7 @@ def test_admin_purge_schemas_expose_confirmation_and_counts() -> None:
         plan_digest="a" * 64,
         warnings=[],
         unreverted_feedback_count=0,
+        unknown_cancellation_count=0,
     )
 
     assert request.confirmation == "PURGE TEST DATA"
@@ -429,6 +432,7 @@ def test_admin_purge_schemas_expose_confirmation_and_counts() -> None:
         "plan_digest": "a" * 64,
         "warnings": [],
         "unreverted_feedback_count": 0,
+        "unknown_cancellation_count": 0,
     }
 
 
@@ -453,3 +457,5 @@ def test_admin_purge_routes_are_registered_with_admin_dependency(
 
     assert require_admin in {dependency.call for dependency in preview_route.dependant.dependencies}
     assert require_admin in {dependency.call for dependency in execute_route.dependant.dependencies}
+    assert inspect.iscoroutinefunction(preview_route.endpoint) is False
+    assert inspect.iscoroutinefunction(execute_route.endpoint) is False

@@ -26,7 +26,7 @@ os.environ.setdefault("INITIAL_ADMIN_EMAIL", "admin@example.com")
 os.environ.setdefault("INITIAL_ADMIN_PASSWORD", "test-admin-password")
 
 import app.admin_activity_service as activity_service
-from app import booking_service
+from app import activity_maintenance, booking_service
 from app.activity_maintenance import acquire_activity_maintenance_lock
 from app.admin_activity_service import (
     PurgePlanChangedError,
@@ -49,6 +49,7 @@ from app.db.models import (
     BookingAttemptStatus,
     BookingStatus,
     Cancellation,
+    CancellationProvenance,
     CancellationStatus,
     Deal,
     DealFeedback,
@@ -857,6 +858,7 @@ def test_preview_and_execute_remove_only_simulated_activity(db: Session) -> None
         "reset_watch_count": 1,
         "warnings": [],
         "unreverted_feedback_count": 0,
+        "unknown_cancellation_count": 0,
     }
 
 
@@ -895,20 +897,17 @@ def test_execute_rolls_back_every_delete_when_a_late_step_fails(
     db.add_all([stat, audit])
     db.commit()
 
-    original_delete_ids = activity_service._delete_ids
+    original_server_delete = activity_service._execute_server_deletes
 
-    def fail_after_attempt_delete(
-        *,
-        db: Session,
-        model: type[object],
-        ids: frozenset[UUID],
-    ) -> int:
-        deleted = original_delete_ids(db=db, model=model, ids=ids)
-        if model is BookingAttempt:
-            raise RuntimeError("forced purge failure")
-        return deleted
+    def fail_after_server_deletes(*, db: Session) -> dict[str, int]:
+        original_server_delete(db=db)
+        raise RuntimeError("forced purge failure")
 
-    monkeypatch.setattr(activity_service, "_delete_ids", fail_after_attempt_delete)
+    monkeypatch.setattr(
+        activity_service,
+        "_execute_server_deletes",
+        fail_after_server_deletes,
+    )
     preview = preview_test_data_purge(db=db)
 
     with pytest.raises(RuntimeError, match="forced purge failure"):
@@ -938,8 +937,7 @@ def test_execute_rolls_back_every_delete_when_a_late_step_fails(
     )
 
 
-@pytest.mark.anyio
-async def test_admin_routes_enforce_auth_confirmation_and_global_classification(
+def test_admin_routes_enforce_auth_confirmation_and_global_classification(
     db: Session,
 ) -> None:
     admin = _add_user(db, label="route-admin", role=UserRole.ADMIN)
@@ -991,14 +989,14 @@ async def test_admin_routes_enforce_auth_confirmation_and_global_classification(
     assert forbidden.value.status_code == 403
     assert forbidden.value.detail == "Admin access required."
 
-    preview = await preview_test_data_purge_record(_=admin, db=db)
+    preview = preview_test_data_purge_record(_=admin, db=db)
     assert preview.dry_run is True
     assert preview.deleted_counts["deals"] == 1
     assert preview.deleted_counts["bookings"] == 1
     assert preview.reset_watch_count == 1
 
     with pytest.raises(HTTPException) as mismatch:
-        await purge_test_data_record(
+        purge_test_data_record(
             payload=AdminTestDataPurgeRequest(
                 confirmation="purge test data",
                 plan_digest=preview.plan_digest,
@@ -1010,7 +1008,7 @@ async def test_admin_routes_enforce_auth_confirmation_and_global_classification(
     assert "PURGE TEST DATA" in mismatch.value.detail
 
     with pytest.raises(HTTPException) as stale:
-        await purge_test_data_record(
+        purge_test_data_record(
             payload=AdminTestDataPurgeRequest(
                 confirmation="PURGE TEST DATA",
                 plan_digest="0" * 64,
@@ -1021,7 +1019,7 @@ async def test_admin_routes_enforce_auth_confirmation_and_global_classification(
     assert stale.value.status_code == 400
     assert "preview changed" in stale.value.detail
 
-    executed = await purge_test_data_record(
+    executed = purge_test_data_record(
         payload=AdminTestDataPurgeRequest(
             confirmation="PURGE TEST DATA",
             plan_digest=preview.plan_digest,
@@ -1097,6 +1095,7 @@ def test_mock_cancellation_on_live_booking_is_reversibly_purged(
     cancellation = db.get(Cancellation, cancellation_id)
     assert cancellation is not None
     assert cancellation.execution_simulated is True
+    assert cancellation.provenance == CancellationProvenance.SIMULATED
     assert cancellation.provider == "mock-booking"
     assert cancellation.provider_payload_json == {
         "simulated": True,
@@ -1309,3 +1308,150 @@ def test_concurrent_live_booking_blocks_on_lock_and_invalidates_stale_digest(
     assert db.get(Deal, live_deal_id) is not None
     assert db.get(Booking, live_booking_id) is not None
     assert db.get(TripWatch, watch_id).status == TripWatchStatus.FULFILLED
+
+
+def test_high_volume_plan_uses_bounded_server_targets(
+    db: Session,
+) -> None:
+    admin = _add_user(db, label="volume-admin", role=UserRole.ADMIN)
+    rows = [
+        {
+            "id": uuid4(),
+            "scope_type": PriceScopeType.ROUTE_CABIN,
+            "scope_key": f"volume-{index}",
+            "month_bucket": date(2026, 7, 1),
+            "sample_n": 1,
+        }
+        for index in range(6_001)
+    ]
+    db.execute(PriceStat.__table__.insert(), rows)
+    db.commit()
+
+    preview = preview_test_data_purge(db=db)
+
+    assert preview.uses_server_targets is True
+    assert preview.deleted_counts["price_stats"] == 6_001
+    assert len(preview.price_stat_ids) <= activity_service.PLAN_ID_EXPORT_LIMIT
+
+    execute_test_data_purge(
+        db=db,
+        actor=admin,
+        confirmation="PURGE TEST DATA",
+        preview_digest=preview.plan_digest,
+    )
+
+    assert _row_count(db, PriceStat) == 0
+
+
+def test_shared_writers_run_concurrently_while_purge_waits(
+    postgres_engine: Engine,
+) -> None:
+    second_writer_acquired = Event()
+    release_second_writer = Event()
+    purge_started = Event()
+
+    def hold_second_writer() -> None:
+        with Session(postgres_engine) as writer:
+            activity_maintenance.acquire_activity_writer_lock(writer)
+            second_writer_acquired.set()
+            assert release_second_writer.wait(timeout=5)
+            writer.rollback()
+
+    def run_preview() -> str:
+        with Session(postgres_engine) as purge_session:
+            purge_started.set()
+            return preview_test_data_purge(db=purge_session).plan_digest
+
+    with Session(postgres_engine) as first_writer:
+        activity_maintenance.acquire_activity_writer_lock(first_writer)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            second_future = executor.submit(hold_second_writer)
+            assert second_writer_acquired.wait(timeout=5)
+            purge_future = executor.submit(run_preview)
+            assert purge_started.wait(timeout=5)
+            assert purge_future.done() is False
+            first_writer.rollback()
+            assert purge_future.done() is False
+            release_second_writer.set()
+            second_future.result(timeout=5)
+            assert len(purge_future.result(timeout=5)) == 64
+
+
+def test_unrevertable_historical_feedback_and_parent_deal_are_retained(
+    db: Session,
+) -> None:
+    admin = _add_user(db, label="feedback-admin", role=UserRole.ADMIN)
+    user = _add_user(db, label="feedback-user")
+    watch = _add_watch(db, user=user, status=TripWatchStatus.ACTIVE)
+    watch.value_pressure = 0.2
+    deal = _add_deal(
+        db,
+        watch=watch,
+        source="mock-duffel",
+        label="feedback-history",
+        status=DealStatus.REJECTED,
+    )
+    feedback = DealFeedback(
+        id=uuid4(),
+        watch_id=watch.id,
+        deal_id=deal.id,
+        rejected_value_score=10.0,
+        reason="too_pricey",
+        signal_type=FeedbackSignalType.VALUE,
+        action_taken_json={"value_pressure": 0.2},
+        created_at=datetime.now(UTC),
+    )
+    db.add(feedback)
+    db.commit()
+
+    preview = preview_test_data_purge(db=db)
+
+    assert feedback.id not in preview.deal_feedback_ids
+    assert deal.id not in preview.deal_ids
+    assert preview.unreverted_feedback_count == 1
+
+    execute_test_data_purge(
+        db=db,
+        actor=admin,
+        confirmation="PURGE TEST DATA",
+        preview_digest=preview.plan_digest,
+    )
+
+    assert db.get(DealFeedback, feedback.id) is not None
+    assert db.get(Deal, deal.id) is not None
+    assert db.get(TripWatch, watch.id).value_pressure == 0.2
+
+
+def test_unknown_live_parent_cancellation_is_warned_and_retained(
+    db: Session,
+) -> None:
+    admin = _add_user(db, label="unknown-admin", role=UserRole.ADMIN)
+    user = _add_user(db, label="unknown-user")
+    watch = _add_watch(db, user=user, status=TripWatchStatus.FULFILLED)
+    deal = _add_deal(db, watch=watch, source="live-duffel", label="unknown-live")
+    booking = _add_booking(db, deal=deal, provider="Duffel", label="unknown-live")
+    cancellation = Cancellation(
+        id=uuid4(),
+        booking_id=booking.id,
+        status=CancellationStatus.REQUESTED,
+        provenance=CancellationProvenance.UNKNOWN,
+        requested_at=datetime.now(UTC),
+    )
+    db.add(cancellation)
+    db.commit()
+
+    preview = preview_test_data_purge(db=db)
+
+    assert preview.unknown_cancellation_count == 1
+    assert cancellation.id not in preview.cancellation_ids
+    assert any("unknown provenance" in warning for warning in preview.warnings)
+
+    execute_test_data_purge(
+        db=db,
+        actor=admin,
+        confirmation="PURGE TEST DATA",
+        preview_digest=preview.plan_digest,
+    )
+
+    assert db.get(Cancellation, cancellation.id) is not None
+    assert db.get(Booking, booking.id) is not None

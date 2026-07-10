@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.activity_maintenance import acquire_activity_maintenance_lock
+from app.activity_maintenance import acquire_activity_writer_lock
 from app.api.schemas.bookings import (
     BookingAttemptReconciliationResponse,
     BookingResponse,
@@ -27,6 +27,7 @@ from app.db.models import (
     BookingAttemptStatus,
     BookingStatus,
     Cancellation,
+    CancellationProvenance,
     CancellationStatus,
     Deal,
     DealStatus,
@@ -160,7 +161,7 @@ def approve_and_book(
             code="attempt_in_progress",
         )
 
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
     claim = _persist_booking_claim(
         db=db,
@@ -174,7 +175,7 @@ def approve_and_book(
         return claim
     booking_attempt = claim
 
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
     existing_by_key = db.scalar(
         select(Booking).where(Booking.idempotency_key == idempotency_key)
@@ -225,7 +226,7 @@ def approve_and_book(
     booking_attempt.recovery_required = True
     db.add(booking_attempt)
     db.commit()
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
 
     booked_at = datetime.now(UTC)
@@ -579,7 +580,7 @@ def cancel_booking(
     booking_id: UUID,
     reason: str | None,
 ) -> CancellationResponse:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     booking = _get_owned_booking_or_404(db=db, user=user, booking_id=booking_id)
     mock_data_enabled = get_mock_data_enabled(db=db)
     if not mock_data_enabled and _booking_is_simulated(db=db, booking=booking):
@@ -621,6 +622,13 @@ def cancel_booking(
         provider_correlation_id=provider_result.provider_correlation_id,
         provider_payload_json=provider_result.provider_payload,
         execution_simulated=execution_simulated,
+        provenance=(
+            CancellationProvenance.SIMULATED
+            if execution_simulated
+            or provider_is_simulated(provider)
+            or payload_is_simulated(provider_result.provider_payload)
+            else CancellationProvenance.LIVE
+        ),
         prior_booking_status=booking.status,
         prior_watch_status=watch.status,
         status=provider_result.status,
@@ -787,6 +795,7 @@ def serialize_cancellation(
         status=cancellation.status,
         provider=cancellation.provider,
         execution_simulated=cancellation.execution_simulated,
+        provenance=cancellation.provenance,
         requested_at=cancellation.requested_at,
         resolved_at=cancellation.resolved_at,
         idempotent_replay=idempotent_replay,
@@ -836,7 +845,7 @@ def _persist_booking_claim(
     payment_method_id: UUID,
     idempotency_key: str,
 ) -> BookingAttempt | BookingResponse:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     claim_deal_id = deal.id
     existing_attempt = db.scalar(
         select(BookingAttempt).where(
@@ -1037,7 +1046,7 @@ def _commit_failed_booking_attempt(
     safe_to_retry: bool = False,
     recovery_required: bool = False,
 ) -> NoReturn:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     booking_attempt.status = BookingAttemptStatus.FAILED
     booking_attempt.recovery_required = recovery_required
     booking_attempt.error_text = error_text

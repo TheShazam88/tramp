@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.activity_maintenance import acquire_activity_maintenance_lock
+from app.activity_maintenance import acquire_activity_writer_lock
 from app.db.models import Booking, BookingStatus, Deal, TrampStampLedger, User
 from app.integrations.service import (
     payload_is_simulated,
@@ -36,7 +36,7 @@ def award_for_live_booking(
     provider_payload: dict[str, object] | None,
     execution_simulated: bool | None,
 ) -> int:
-    acquire_activity_maintenance_lock(db)
+    acquire_activity_writer_lock(db)
     if booking.status not in {BookingStatus.TICKETED, BookingStatus.BOOKED}:
         return 0
     if execution_simulated is not False:
