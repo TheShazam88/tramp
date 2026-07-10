@@ -486,6 +486,21 @@ export interface IntegrationData {
   };
 }
 
+export interface TestDataPurgeRequest {
+  confirmation: string;
+  planDigest: string;
+}
+
+export interface TestDataPurgeResult {
+  dryRun: boolean;
+  deletedCounts: Record<string, number>;
+  resetWatchCount: number;
+  planDigest: string;
+  warnings: string[];
+  unrevertedFeedbackCount: number;
+  unknownCancellationCount: number;
+}
+
 export interface IntegrationTestResult {
   providerKey: string;
   status: "connected" | "attention";

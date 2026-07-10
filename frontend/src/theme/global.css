@@ -304,6 +304,17 @@ a.button {
   color: var(--value-dark);
 }
 
+.button-destructive {
+  border-color: var(--alert);
+  background: var(--alert);
+  color: #fff;
+}
+
+.button-destructive:hover {
+  border-color: color-mix(in srgb, var(--alert) 82%, black);
+  background: color-mix(in srgb, var(--alert) 82%, black);
+}
+
 .badge-row {
   display: flex;
   align-items: center;
@@ -1027,6 +1038,32 @@ a.button {
 .panel-actions-between {
   justify-content: space-between;
   align-items: center;
+}
+
+.purge-test-data-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.purge-test-data-panel .panel-actions,
+.purge-test-data-panel .form-shell,
+.purge-test-data-panel .key-value-list {
+  margin-top: 0;
+}
+
+.purge-test-data-panel [role="alert"]:focus,
+.purge-test-data-panel [role="status"]:focus {
+  outline: 3px solid color-mix(in srgb, var(--alert) 42%, transparent);
+  outline-offset: 3px;
+}
+
+.purge-count-list {
+  max-height: 24rem;
+  overflow: auto;
+}
+
+.purge-confirmation-phrase {
+  flex: 1 1 18rem;
 }
 
 .profile-impact-card {

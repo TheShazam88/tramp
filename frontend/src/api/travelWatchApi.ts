@@ -28,6 +28,8 @@ import type {
   PaymentMethodProfile,
   ProfileWorkspace,
   SignupStartSession,
+  TestDataPurgeRequest,
+  TestDataPurgeResult,
   TotpEnrollmentSession,
   TravelerProfile,
   TripTemplateProfile,
@@ -613,6 +615,62 @@ interface AdminIntegrationTestRaw {
   ok?: boolean | null;
   tested_at?: string | null;
   testedAt?: string | null;
+}
+
+interface AdminTestDataPurgeResponseRaw {
+  dry_run: boolean;
+  deleted_counts: Record<string, number>;
+  reset_watch_count: number;
+  plan_digest: string;
+  warnings: string[];
+  unreverted_feedback_count: number;
+  unknown_cancellation_count: number;
+}
+
+const mockTestDataPurgePreview: TestDataPurgeResult = {
+  dryRun: true,
+  deletedCounts: {
+    audit_log: 0,
+    booking_attempts: 0,
+    bookings: 0,
+    cancellations: 0,
+    deal_feedback: 0,
+    deals: 0,
+    disruptions: 0,
+    notification_deliveries: 0,
+    price_observations: 0,
+    price_stats: 0,
+    rejected_fingerprints: 0,
+    spend_ledger: 0,
+    suppressed_attributes: 0,
+  },
+  resetWatchCount: 0,
+  planDigest: "0".repeat(64),
+  warnings: ["Demo mode is isolated. No backend data can be purged."],
+  unrevertedFeedbackCount: 0,
+  unknownCancellationCount: 0,
+};
+
+function copyMockTestDataPurgePreview(): TestDataPurgeResult {
+  return {
+    ...mockTestDataPurgePreview,
+    deletedCounts: { ...mockTestDataPurgePreview.deletedCounts },
+    warnings: [...mockTestDataPurgePreview.warnings],
+  };
+}
+
+function mapTestDataPurgeResult(
+  response: AdminTestDataPurgeResponseRaw,
+): TestDataPurgeResult {
+  return {
+    dryRun: response.dry_run,
+    deletedCounts: { ...response.deleted_counts },
+    resetWatchCount: response.reset_watch_count,
+    planDigest: response.plan_digest,
+    warnings: [...response.warnings],
+    unrevertedFeedbackCount: response.unreverted_feedback_count,
+    unknownCancellationCount: response.unknown_cancellation_count,
+  };
 }
 
 function listToText(values: string[] | null | undefined) {
@@ -2719,6 +2777,34 @@ export const travelWatchApi = {
 
     const response = await apiClient.get<AdminIntegrationsResponseRaw | IntegrationData>("/admin/integrations");
     return mapIntegrationsResponse(response);
+  },
+
+  previewTestDataPurge: async (): Promise<TestDataPurgeResult> => {
+    if (useMockData) {
+      return withLatency(copyMockTestDataPurgePreview());
+    }
+
+    const response = await apiClient.get<AdminTestDataPurgeResponseRaw>(
+      "/admin/test-data/purge-preview",
+    );
+    return mapTestDataPurgeResult(response);
+  },
+
+  purgeTestData: async (
+    payload: TestDataPurgeRequest,
+  ): Promise<TestDataPurgeResult> => {
+    if (useMockData) {
+      return withLatency(copyMockTestDataPurgePreview());
+    }
+
+    const response = await apiClient.post<AdminTestDataPurgeResponseRaw>(
+      "/admin/test-data/purge",
+      {
+        confirmation: payload.confirmation,
+        plan_digest: payload.planDigest,
+      },
+    );
+    return mapTestDataPurgeResult(response);
   },
 
   testIntegrationConnection: async (providerKey: string): Promise<IntegrationTestResult> => {

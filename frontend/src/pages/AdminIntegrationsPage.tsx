@@ -10,6 +10,7 @@ import type {
   IntegrationProvider,
 } from "@/api/types";
 import { CredentialGuide } from "@/components/admin/CredentialGuide";
+import { PurgeTestDataPanel } from "@/components/admin/PurgeTestDataPanel";
 import { Badge, Button, EmptyState, InfoList, SectionHeading, Surface } from "@/components/ui/primitives";
 
 const toneByStatus = {
@@ -445,6 +446,8 @@ export function AdminIntegrationsPage() {
           </div>
         </div>
       </Surface>
+
+      <PurgeTestDataPanel />
 
       <Surface>
         <SectionHeading

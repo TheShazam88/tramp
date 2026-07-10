@@ -566,3 +566,27 @@ describe("AdminIntegrationsPage credential guide placement", () => {
     );
   });
 });
+
+describe("AdminIntegrationsPage test data purge placement", () => {
+  it("renders the purge panel on Runtime without starting a preview", async () => {
+    const preview = vi.spyOn(travelWatchApi, "previewTestDataPurge");
+
+    renderCategory("runtime", []);
+
+    expect(
+      await screen.findByRole("heading", { name: "Purge test data" }),
+    ).toBeInTheDocument();
+    expect(preview).not.toHaveBeenCalled();
+  });
+
+  it("does not render the purge panel on another admin category", async () => {
+    renderCategory("flights", []);
+
+    expect(
+      await screen.findByRole("heading", { name: "flights" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Purge test data" }),
+    ).not.toBeInTheDocument();
+  });
+});
