@@ -933,10 +933,14 @@ def test_retry_after_crash_does_not_reexecute_provider(
     _patch_booking_runtime(monkeypatch, connector)
     idempotency_key = f"claim-crash-{uuid4()}"
     claim_was_visible = False
+    lock_calls = 0
     real_lock = booking_service._lock_deal_for_booking
 
     def crash_after_claim(*, db: Session, deal_id: UUID):
-        nonlocal claim_was_visible
+        nonlocal claim_was_visible, lock_calls
+        lock_calls += 1
+        if lock_calls == 1:
+            return real_lock(db=db, deal_id=deal_id)
         with Session(postgres_engine) as verify_db:
             claim_was_visible = (
                 verify_db.scalar(
@@ -1364,7 +1368,6 @@ def test_concurrent_distinct_keys_for_same_deal_call_provider_once(
         "push_booking_to_calendar",
         lambda **_kwargs: {"transport": "test"},
     )
-    second_claim_started = threading.Event()
     claim_count = 0
     claim_lock = threading.Lock()
 
@@ -1381,8 +1384,6 @@ def test_concurrent_distinct_keys_for_same_deal_call_provider_once(
             return
         with claim_lock:
             claim_count += 1
-            if claim_count == 2:
-                second_claim_started.set()
 
     event.listen(postgres_engine, "before_cursor_execute", observe_claim)
     first_idempotency_key = f"concurrent-deal-first-{uuid4()}"
@@ -1407,11 +1408,14 @@ def test_concurrent_distinct_keys_for_same_deal_call_provider_once(
                 idempotency_key=second_idempotency_key,
             )
             try:
-                assert second_claim_started.wait(timeout=10)
+                in_progress_result = second_future.result(timeout=10)
+                assert isinstance(in_progress_result, ConflictError)
+                assert in_progress_result.code == "attempt_in_progress"
                 assert connector.call_count == 1
+                assert claim_count == 1
             finally:
                 connector.release_provider.set()
-            results = [first_future.result(), second_future.result()]
+            results = [first_future.result(), in_progress_result]
     finally:
         connector.release_provider.set()
         event.remove(postgres_engine, "before_cursor_execute", observe_claim)
@@ -1420,7 +1424,8 @@ def test_concurrent_distinct_keys_for_same_deal_call_provider_once(
     conflicts = [result for result in results if isinstance(result, ConflictError)]
     assert len(responses) == 1
     assert len(conflicts) == 1
-    assert "already been booked" in str(conflicts[0])
+    assert conflicts[0].code == "attempt_in_progress"
+    assert "recovery" in str(conflicts[0])
     assert connector.call_count == 1
     assert connector.received_idempotency_keys == [first_idempotency_key]
     with Session(postgres_engine) as verify_db:
@@ -1432,11 +1437,8 @@ def test_concurrent_distinct_keys_for_same_deal_call_provider_once(
                 select(BookingAttempt).where(BookingAttempt.deal_id == deal_id)
             )
         )
-        assert len(attempts) == 2
-        assert {attempt.status for attempt in attempts} == {
-            BookingAttemptStatus.BOOKED,
-            BookingAttemptStatus.FAILED,
-        }
+        assert len(attempts) == 1
+        assert attempts[0].status == BookingAttemptStatus.BOOKED
         assert verify_db.scalar(
             select(func.count())
             .select_from(TrampStampLedger)

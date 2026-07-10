@@ -17,12 +17,14 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     Time,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -687,6 +689,12 @@ class BookingAttempt(UUIDPrimaryKeyMixin, Base):
         UniqueConstraint(
             "idempotency_key",
             name="uq_booking_attempts_idempotency_key",
+        ),
+        Index(
+            "ux_booking_attempts_unresolved_deal",
+            "deal_id",
+            unique=True,
+            postgresql_where=text("status IN ('STARTED', 'REVALIDATED')"),
         ),
     )
 

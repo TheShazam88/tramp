@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { saveStoredBookingAttempt } from "@/api/bookingAttempts";
 import { ApiError } from "@/api/client";
@@ -218,6 +218,10 @@ describe("DealReviewPage booking execution", () => {
     vi.spyOn(travelWatchApi, "reconcileBookingAttempt").mockImplementation(reconcileAttempt);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("disables submit, hide, and cancel controls while booking is pending", async () => {
     let resolveBooking: (result: DealApprovalResult) => void = () => undefined;
     vi.mocked(travelWatchApi.bookDeal).mockReturnValue(
@@ -285,7 +289,10 @@ describe("DealReviewPage booking execution", () => {
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent("Booking confirmed.");
     expect(status).toHaveFocus();
-    expect(reconcileAttempt).toHaveBeenCalledWith(expect.any(String));
+    expect(reconcileAttempt).toHaveBeenCalledWith(expect.any(String), {
+      dealId: "deal-1",
+      paymentMethodId: "payment-1",
+    });
     expect(screen.queryByLabelText("Six-digit TOTP code")).not.toBeInTheDocument();
   });
 
@@ -378,11 +385,128 @@ describe("DealReviewPage booking execution", () => {
 
     renderDealReview();
 
-    const status = await screen.findByRole("status");
+    await screen.findByText("Booking confirmed. Provider: Duffel. Amount: $640. Status: ticketed.");
+    const status = screen.getByRole("status");
     expect(status).toHaveTextContent("Booking confirmed.");
-    expect(reconcileAttempt).toHaveBeenCalledWith("restored-attempt-key");
+    expect(reconcileAttempt).toHaveBeenCalledWith("restored-attempt-key", {
+      dealId: "deal-1",
+      paymentMethodId: "payment-1",
+    });
     expect(sessionStorage.getItem("tramp.booking-attempt.deal-1")).toBeNull();
     expect(travelWatchApi.createApprovalToken).not.toHaveBeenCalled();
+  });
+
+  it("polls an in-progress attempt until the booking completes", async () => {
+    vi.useFakeTimers();
+    saveStoredBookingAttempt({
+      version: 1,
+      dealId: "deal-1",
+      idempotencyKey: "polling-attempt-key",
+      paymentMethodId: "payment-1",
+      state: "reconciling",
+    });
+    reconcileAttempt
+      .mockResolvedValueOnce(
+        reconciliation({
+          idempotencyKey: "polling-attempt-key",
+          code: "attempt_in_progress",
+        }),
+      )
+      .mockResolvedValueOnce(
+        reconciliation({
+          idempotencyKey: "polling-attempt-key",
+          status: "booked",
+          code: "booked",
+          message: "Booking confirmed from the saved booking record.",
+          booking: approvalResult,
+        }),
+      );
+
+    renderDealReview();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(reconcileAttempt).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(reconcileAttempt).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("status")).toHaveTextContent("Booking confirmed.");
+    expect(sessionStorage.getItem("tramp.booking-attempt.deal-1")).toBeNull();
+  });
+
+  it("bounds automatic polling and keeps a manual Check again action", async () => {
+    vi.useFakeTimers();
+    saveStoredBookingAttempt({
+      version: 1,
+      dealId: "deal-1",
+      idempotencyKey: "bounded-attempt-key",
+      paymentMethodId: "payment-1",
+      state: "reconciling",
+    });
+    reconcileAttempt.mockResolvedValue(
+      reconciliation({
+        idempotencyKey: "bounded-attempt-key",
+        code: "attempt_in_progress",
+      }),
+    );
+
+    renderDealReview();
+    for (let check = 0; check < 3; check += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+    }
+
+    expect(reconcileAttempt).toHaveBeenCalledTimes(4);
+    expect(screen.getByRole("status")).toHaveTextContent("Automatic checks stopped");
+    const checkAgain = screen.getByRole("button", { name: "Check again" });
+    fireEvent.click(checkAgain);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(reconcileAttempt).toHaveBeenCalledTimes(5);
+  });
+
+  it("shows recovery and navigation actions when deal loading fails", async () => {
+    saveStoredBookingAttempt({
+      version: 1,
+      dealId: "deal-1",
+      idempotencyKey: "error-branch-attempt-key",
+      paymentMethodId: "payment-1",
+      state: "manual_recovery",
+    });
+    vi.mocked(travelWatchApi.getDealReview).mockRejectedValueOnce(
+      new Error("Deal loading failed."),
+    );
+    reconcileAttempt.mockResolvedValueOnce(
+      reconciliation({
+        idempotencyKey: "error-branch-attempt-key",
+        status: "failed",
+        code: "provider_failed",
+        message: "Manual booking recovery is required.",
+      }),
+    );
+
+    const { router, user } = renderDealReview();
+
+    await screen.findByText("Manual booking recovery is required.");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Manual booking recovery is required.",
+    );
+    expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
+    expect(screen.getByText("Deal loading failed.")).toBeVisible();
+
+    const navigation = router.navigate("/bookings");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Booking recovery is still pending",
+    );
+    await user.click(screen.getByRole("button", { name: "Stay on this page" }));
+    await navigation;
   });
 
   it("reconciles stateful 409 conflicts and locks payment, rejection, and navigation", async () => {
@@ -403,7 +527,10 @@ describe("DealReviewPage booking execution", () => {
 
     const recoveryStatus = await screen.findByRole("status");
     expect(recoveryStatus).toHaveTextContent("still processing");
-    expect(reconcileAttempt).toHaveBeenCalledWith(expect.any(String));
+    expect(reconcileAttempt).toHaveBeenCalledWith(expect.any(String), {
+      dealId: "deal-1",
+      paymentMethodId: "payment-1",
+    });
     expect(screen.getByLabelText("Saved payment method")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Too pricey" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Ignore" })).toBeDisabled();

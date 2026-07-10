@@ -58,6 +58,7 @@ from app.tramp_stamp_service import award_for_live_booking, stamp_balance
 
 logger = logging.getLogger(__name__)
 IDEMPOTENCY_CLAIM_CONSTRAINT = "uq_booking_attempts_idempotency_key"
+UNRESOLVED_DEAL_CLAIM_INDEX = "ux_booking_attempts_unresolved_deal"
 COMPLETED_BOOKING_STATUSES = {BookingStatus.TICKETED, BookingStatus.BOOKED}
 ATTEMPT_IN_PROGRESS_MESSAGE = (
     "This booking attempt is still processing. Booking recovery is required before trying again."
@@ -147,6 +148,18 @@ def approve_and_book(
     )
     _revalidate_deal_before_booking(deal=deal)
 
+    unresolved_attempt = _get_unresolved_attempt_for_deal(
+        db=db,
+        deal_id=deal.id,
+        exclude_idempotency_key=idempotency_key,
+    )
+    if unresolved_attempt is not None:
+        raise ConflictError(
+            ATTEMPT_IN_PROGRESS_MESSAGE,
+            code="attempt_in_progress",
+        )
+
+    deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
     claim = _persist_booking_claim(
         db=db,
         user=user,
@@ -742,6 +755,32 @@ def _integrity_constraint_name(exc: IntegrityError) -> str | None:
     return getattr(diagnostic, "constraint_name", None)
 
 
+def _get_unresolved_attempt_for_deal(
+    *,
+    db: Session,
+    deal_id: UUID,
+    exclude_idempotency_key: str | None = None,
+) -> BookingAttempt | None:
+    statement = (
+        select(BookingAttempt)
+        .where(
+            BookingAttempt.deal_id == deal_id,
+            BookingAttempt.status.in_(
+                {
+                    BookingAttemptStatus.STARTED,
+                    BookingAttemptStatus.REVALIDATED,
+                }
+            ),
+        )
+        .order_by(BookingAttempt.started_at.asc(), BookingAttempt.id.asc())
+    )
+    if exclude_idempotency_key:
+        statement = statement.where(
+            BookingAttempt.idempotency_key != exclude_idempotency_key
+        )
+    return db.scalar(statement)
+
+
 def _persist_booking_claim(
     *,
     db: Session,
@@ -768,6 +807,17 @@ def _persist_booking_claim(
             attempt=existing_attempt,
         )
 
+    unresolved_attempt = _get_unresolved_attempt_for_deal(
+        db=db,
+        deal_id=claim_deal_id,
+        exclude_idempotency_key=idempotency_key,
+    )
+    if unresolved_attempt is not None:
+        raise ConflictError(
+            ATTEMPT_IN_PROGRESS_MESSAGE,
+            code="attempt_in_progress",
+        )
+
     booking_attempt = BookingAttempt(
         deal_id=claim_deal_id,
         watch_id=watch.id,
@@ -787,6 +837,11 @@ def _persist_booking_claim(
     except IntegrityError as exc:
         constraint_name = _integrity_constraint_name(exc)
         db.rollback()
+        if constraint_name == UNRESOLVED_DEAL_CLAIM_INDEX:
+            raise ConflictError(
+                ATTEMPT_IN_PROGRESS_MESSAGE,
+                code="attempt_in_progress",
+            ) from exc
         if constraint_name != IDEMPOTENCY_CLAIM_CONSTRAINT:
             raise
         return _resolve_claim_conflict(

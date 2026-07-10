@@ -65,6 +65,23 @@ describe("travelWatchApi mock payment and booking isolation", () => {
     expect(storedAttemptJson).not.toMatch(
       /approval-secret-value|987654|master-secret-value|approvalToken|totpCode|masterKeyPassphrase/,
     );
+
+    vi.resetModules();
+    const { travelWatchApi: reloadedApi } = await import("@/api/travelWatchApi");
+    const interrupted = await reloadedApi.reconcileBookingAttempt(
+      "00000000-0000-4000-8000-000000000001",
+      {
+        dealId: "deal-1",
+        paymentMethodId: workspace.paymentMethods[0].id,
+      },
+    );
+    expect(interrupted).toEqual(
+      expect.objectContaining({
+        code: "mock_interrupted",
+        safeToRetry: true,
+        booking: null,
+      }),
+    );
     expect(fetch).not.toHaveBeenCalled();
   });
 });

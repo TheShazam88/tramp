@@ -2384,6 +2384,7 @@ export const travelWatchApi = {
 
   reconcileBookingAttempt: async (
     idempotencyKey: string,
+    context?: { dealId: string; paymentMethodId: string },
   ): Promise<BookingAttemptReconciliation> => {
     if (useMockData) {
       const attempt = getMockBookingAttempt(idempotencyKey);
@@ -2410,12 +2411,12 @@ export const travelWatchApi = {
       }
       return withLatency({
         idempotencyKey,
-        dealId: "",
-        paymentMethodId: "",
-        status: "started",
-        code: "attempt_in_progress",
-        message: "This simulated booking attempt is still processing.",
-        safeToRetry: false,
+        dealId: context?.dealId ?? "",
+        paymentMethodId: context?.paymentMethodId ?? "",
+        status: "failed",
+        code: "mock_interrupted",
+        message: "The simulated booking was interrupted. Start a new booking attempt.",
+        safeToRetry: true,
         booking: null,
         startedAt: new Date().toISOString(),
       });

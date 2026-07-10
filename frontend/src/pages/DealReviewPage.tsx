@@ -73,6 +73,9 @@ type BookingMutationOutcome =
       safeToRetry: boolean;
     };
 
+const MAX_AUTOMATIC_RECONCILIATION_CHECKS = 4;
+const RECONCILIATION_POLL_INTERVAL_MS = 1000;
+
 export function DealReviewPage() {
   const { dealId = "deal-118400" } = useParams();
   const location = useLocation();
@@ -104,6 +107,7 @@ export function DealReviewPage() {
   const [attemptReconciliationPending, setAttemptReconciliationPending] = useState(
     Boolean(logicalAttempt),
   );
+  const [automaticPollScheduled, setAutomaticPollScheduled] = useState(false);
   const bookingFeedbackRef = useRef<HTMLDivElement>(null);
   const navigationAlertRef = useRef<HTMLDivElement>(null);
   const bookingRequestRef = useRef<BookDealRequest | null>(null);
@@ -114,6 +118,8 @@ export function DealReviewPage() {
   const mintedApprovalTokenRef = useRef<string | null>(null);
   const consumedApprovalTokenRef = useRef<string | null>(null);
   const reconciledAttemptKeyRef = useRef<string | null>(null);
+  const reconciliationPollCountRef = useRef(0);
+  const reconciliationTimerRef = useRef<number | null>(null);
   const allowInternalNavigationRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -188,9 +194,15 @@ export function DealReviewPage() {
     setLogicalAttempt(null);
     setAttemptAllowsRetry(false);
     setAttemptReconciliationPending(false);
+    setAutomaticPollScheduled(false);
     idempotencyKeyRef.current = null;
     mintedApprovalTokenRef.current = null;
     reconciledAttemptKeyRef.current = null;
+    reconciliationPollCountRef.current = 0;
+    if (reconciliationTimerRef.current !== null) {
+      window.clearTimeout(reconciliationTimerRef.current);
+      reconciliationTimerRef.current = null;
+    }
   }, [dealId]);
 
   const completeBookingSuccess = useCallback(
@@ -210,10 +222,10 @@ export function DealReviewPage() {
         consumedApprovalTokenRef.current = approvalTokenFromLink;
         const nextSearchParams = new URLSearchParams(searchParams);
         nextSearchParams.delete("approvalToken");
-      allowInternalNavigationRef.current = true;
+        allowInternalNavigationRef.current = true;
         setSearchParams(nextSearchParams, { replace: true });
         await Promise.resolve();
-      allowInternalNavigationRef.current = false;
+        allowInternalNavigationRef.current = false;
         queryClient.removeQueries({ queryKey: approvalTokenQueryKey, exact: true });
       }
 
@@ -262,6 +274,7 @@ export function DealReviewPage() {
         };
         persistLogicalAttempt(conflictAttempt);
         setAttemptAllowsRetry(false);
+        setAutomaticPollScheduled(false);
         setBookingFeedback({ kind: "status", message: conflictAttempt.message ?? "" });
         return;
       }
@@ -275,6 +288,42 @@ export function DealReviewPage() {
         setShowApprovalForm(true);
         return;
       }
+      if (result.code === "attempt_in_progress") {
+        const automaticChecks = reconciliationPollCountRef.current;
+        if (automaticChecks < MAX_AUTOMATIC_RECONCILIATION_CHECKS) {
+          const pollingAttempt: StoredBookingAttempt = {
+            ...storedAttempt,
+            state: "reconciling",
+            code: result.code,
+            message: result.message,
+          };
+          persistLogicalAttempt(pollingAttempt);
+          setAttemptAllowsRetry(false);
+          setShowApprovalForm(true);
+          setBookingFeedback({
+            kind: "status",
+            message: `${result.message} Automatic check ${automaticChecks} of ${MAX_AUTOMATIC_RECONCILIATION_CHECKS}.`,
+          });
+          setAutomaticPollScheduled(true);
+          return;
+        }
+
+        const timedOutAttempt: StoredBookingAttempt = {
+          ...storedAttempt,
+          state: "manual_recovery",
+          code: result.code,
+          message: result.message,
+        };
+        persistLogicalAttempt(timedOutAttempt);
+        setAttemptAllowsRetry(false);
+        setAutomaticPollScheduled(false);
+        setShowApprovalForm(true);
+        setBookingFeedback({
+          kind: "status",
+          message: `${result.message} Automatic checks stopped. Use Check again for a manual status check.`,
+        });
+        return;
+      }
 
       const unresolvedAttempt: StoredBookingAttempt = {
         ...storedAttempt,
@@ -284,6 +333,7 @@ export function DealReviewPage() {
       };
       persistLogicalAttempt(unresolvedAttempt);
       setAttemptAllowsRetry(false);
+      setAutomaticPollScheduled(false);
       setShowApprovalForm(true);
       setBookingFeedback({ kind: "status", message: result.message });
     },
@@ -292,6 +342,7 @@ export function DealReviewPage() {
 
   const reconcileLogicalAttempt = useCallback(
     async (storedAttempt: StoredBookingAttempt) => {
+      reconciliationPollCountRef.current += 1;
       setAttemptReconciliationPending(true);
       setAttemptAllowsRetry(false);
       setBookingFeedback({
@@ -301,6 +352,10 @@ export function DealReviewPage() {
       try {
         const result = await travelWatchApi.reconcileBookingAttempt(
           storedAttempt.idempotencyKey,
+          {
+            dealId: storedAttempt.dealId,
+            paymentMethodId: storedAttempt.paymentMethodId,
+          },
         );
         if (mountedRef.current) {
           await applyAttemptReconciliation(storedAttempt, result);
@@ -319,6 +374,7 @@ export function DealReviewPage() {
           };
           persistLogicalAttempt(retryableAttempt);
           setAttemptAllowsRetry(true);
+          setAutomaticPollScheduled(false);
           setShowApprovalForm(true);
           setBookingFeedback({ kind: "error", message: retryableAttempt.message ?? "" });
         } else {
@@ -331,6 +387,7 @@ export function DealReviewPage() {
           };
           persistLogicalAttempt(pendingAttempt);
           setAttemptAllowsRetry(false);
+          setAutomaticPollScheduled(false);
           setBookingFeedback({ kind: "status", message: pendingAttempt.message ?? "" });
         }
       } finally {
@@ -343,6 +400,45 @@ export function DealReviewPage() {
   );
 
   useEffect(() => {
+    if (
+      !automaticPollScheduled ||
+      !logicalAttempt ||
+      attemptReconciliationPending
+    ) {
+      return;
+    }
+    reconciliationTimerRef.current = window.setTimeout(() => {
+      reconciliationTimerRef.current = null;
+      setAutomaticPollScheduled(false);
+      void reconcileLogicalAttempt(logicalAttempt);
+    }, RECONCILIATION_POLL_INTERVAL_MS);
+    return () => {
+      if (reconciliationTimerRef.current !== null) {
+        window.clearTimeout(reconciliationTimerRef.current);
+        reconciliationTimerRef.current = null;
+      }
+    };
+  }, [
+    attemptReconciliationPending,
+    automaticPollScheduled,
+    logicalAttempt,
+    reconcileLogicalAttempt,
+  ]);
+
+  const checkAttemptAgain = useCallback(() => {
+    if (!logicalAttempt || attemptReconciliationPending || bookingAttemptPendingRef.current) {
+      return;
+    }
+    if (reconciliationTimerRef.current !== null) {
+      window.clearTimeout(reconciliationTimerRef.current);
+      reconciliationTimerRef.current = null;
+    }
+    reconciliationPollCountRef.current = MAX_AUTOMATIC_RECONCILIATION_CHECKS;
+    setAutomaticPollScheduled(false);
+    void reconcileLogicalAttempt(logicalAttempt);
+  }, [attemptReconciliationPending, logicalAttempt, reconcileLogicalAttempt]);
+
+  useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -351,6 +447,10 @@ export function DealReviewPage() {
       idempotencyKeyRef.current = null;
       mintedApprovalTokenRef.current = null;
       consumedApprovalTokenRef.current = null;
+      if (reconciliationTimerRef.current !== null) {
+        window.clearTimeout(reconciliationTimerRef.current);
+        reconciliationTimerRef.current = null;
+      }
       resetBookingMutationRef.current();
     };
   }, []);
@@ -390,6 +490,7 @@ export function DealReviewPage() {
       return;
     }
     reconciledAttemptKeyRef.current = storedAttempt.idempotencyKey;
+    reconciliationPollCountRef.current = 0;
     void reconcileLogicalAttempt(storedAttempt);
   }, [dealId, persistLogicalAttempt, reconcileLogicalAttempt]);
 
@@ -427,9 +528,74 @@ export function DealReviewPage() {
     setMasterKeyPassphrase("");
   }, []);
 
+  const navigationBlockNotice =
+    navigationBlocker.state === "blocked" ? (
+      <div
+        ref={navigationAlertRef}
+        className="notice notice-alert"
+        role="alert"
+        tabIndex={-1}
+      >
+        <p className="item-title">Booking recovery is still pending</p>
+        <p className="item-copy">
+          Stay on this page while the booking is processing, or leave only after the active
+          request settles. Saved recovery details never include your security codes.
+        </p>
+        <div className="button-row">
+          <Button type="button" onClick={() => navigationBlocker.reset?.()}>
+            Stay on this page
+          </Button>
+          {!isBookingPending ? (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => navigationBlocker.proceed?.()}
+            >
+              Leave and keep recovery
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    ) : null;
+
+  const bookingFeedbackNotice = bookingFeedback ? (
+    <div
+      ref={bookingFeedbackRef}
+      className={
+        bookingFeedback.kind === "error"
+          ? "notice notice-alert"
+          : "notice notice-value"
+      }
+      role={bookingFeedback.kind === "error" ? "alert" : "status"}
+      tabIndex={-1}
+    >
+      {bookingFeedback.message}
+    </div>
+  ) : null;
+
+  const recoveryActions = hasUnresolvedAttempt ? (
+    <div className="notice notice-value">
+      <p className="item-title">Saved booking recovery</p>
+      <p className="item-copy">
+        TRAMP will keep the current key and payment method frozen until recovery finishes.
+      </p>
+      <Button
+        type="button"
+        variant="secondary"
+        onClick={checkAttemptAgain}
+        disabled={attemptReconciliationPending || isBookingPending}
+      >
+        {attemptReconciliationPending ? "Checking..." : "Check again"}
+      </Button>
+    </div>
+  ) : null;
+
   if (!data) {
     return (
       <div className="stack">
+        {navigationBlockNotice}
+        {bookingFeedbackNotice}
+        {recoveryActions}
         <Surface>
           {error ? getApiErrorMessage(error, "Unable to load the deal review.") : "Loading deal review..."}
         </Surface>
@@ -599,34 +765,8 @@ export function DealReviewPage() {
 
   return (
     <div className="stack">
-      {navigationBlocker.state === "blocked" ? (
-        <div
-          ref={navigationAlertRef}
-          className="notice notice-alert"
-          role="alert"
-          tabIndex={-1}
-        >
-          <p className="item-title">Booking recovery is still pending</p>
-          <p className="item-copy">
-            Stay on this page while the booking is processing, or leave only after the active
-            request settles. Saved recovery details never include your security codes.
-          </p>
-          <div className="button-row">
-            <Button type="button" onClick={() => navigationBlocker.reset?.()}>
-              Stay on this page
-            </Button>
-            {!isBookingPending ? (
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => navigationBlocker.proceed?.()}
-              >
-                Leave and keep recovery
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      {navigationBlockNotice}
+      {recoveryActions}
 
       <Surface className="page-hero">
         <SectionHeading
@@ -798,20 +938,7 @@ export function DealReviewPage() {
           </Surface>
         ) : null}
 
-        {bookingFeedback ? (
-          <div
-            ref={bookingFeedbackRef}
-            className={
-              bookingFeedback.kind === "error"
-                ? "notice notice-alert"
-                : "notice notice-value"
-            }
-            role={bookingFeedback.kind === "error" ? "alert" : "status"}
-            tabIndex={-1}
-          >
-            {bookingFeedback.message}
-          </div>
-        ) : null}
+        {bookingFeedbackNotice}
 
         {showApprovalForm ? (
           <Surface className="inset-card approval-card">
