@@ -6,7 +6,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.db.models import BookingStatus, CancellationStatus, DisruptionStatus, DisruptionType, NotificationDeliveryStatus
+from app.db.models import (
+    BookingStatus,
+    CancellationStatus,
+    DisruptionStatus,
+    DisruptionType,
+    NotificationDeliveryStatus,
+)
 
 
 class ApproveBookingRequest(BaseModel):
@@ -95,6 +101,8 @@ class BookingResponse(BaseModel):
     cancellation: CancellationResponse | None
     disruptions: list[DisruptionResponse] = Field(default_factory=list)
     notifications: list[NotificationDeliveryResponse] = Field(default_factory=list)
+    tramp_stamps_awarded: int = 0
+    tramp_stamp_balance: int = 0
     idempotent_replay: bool = False
 
 

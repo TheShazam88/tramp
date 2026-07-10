@@ -22,7 +22,6 @@ from app.db.models import (
     CancellationStatus,
     Deal,
     DealStatus,
-    Disruption,
     PaymentMethod,
     SpendLedger,
     TripWatch,
@@ -46,6 +45,7 @@ from app.security.key_provider import get_key_provider
 from app.security.tokens import SignedTokenService
 from app.security.totp import verify_totp_code
 from app.service_errors import AuthenticationError, ConflictError
+from app.tramp_stamp_service import award_for_live_booking, stamp_balance
 
 
 def approve_and_book(
@@ -184,7 +184,8 @@ def approve_and_book(
     calendar_detail = "Calendar sync not attempted."
     try:
         calendar_result = push_booking_to_calendar(db=db, booking=booking, deal=deal, watch=watch)
-        calendar_detail = f"Calendar sync complete via {calendar_result.get('transport', 'local-safe')}."
+        calendar_transport = calendar_result.get("transport", "local-safe")
+        calendar_detail = f"Calendar sync complete via {calendar_transport}."
     except Exception as exc:  # noqa: BLE001
         calendar_detail = f"Calendar sync failed: {exc}"
     booking.calendar_detail = calendar_detail
@@ -214,10 +215,22 @@ def approve_and_book(
     deal.status = DealStatus.BOOKED
     watch.status = TripWatchStatus.FULFILLED
     db.add_all([deal, watch, booking, booking_attempt])
+    stamps_awarded = award_for_live_booking(
+        db=db,
+        user=user,
+        booking=booking,
+        deal=deal,
+        provider_payload=provider_result.provider_payload,
+    )
     db.commit()
     db.refresh(booking)
     _enqueue_notification_tasks(notification_deliveries)
-    return serialize_booking(db=db, user=user, booking=booking)
+    return serialize_booking(
+        db=db,
+        user=user,
+        booking=booking,
+        tramp_stamps_awarded=stamps_awarded,
+    )
 
 
 def list_bookings(*, db: Session, user: User) -> list[BookingResponse]:
@@ -232,7 +245,11 @@ def list_bookings(*, db: Session, user: User) -> list[BookingResponse]:
         )
     )
     if not mock_data_enabled:
-        bookings = [booking for booking in bookings if not _booking_is_simulated(db=db, booking=booking)]
+        bookings = [
+            booking
+            for booking in bookings
+            if not _booking_is_simulated(db=db, booking=booking)
+        ]
     return [serialize_booking(db=db, user=user, booking=booking) for booking in bookings]
 
 
@@ -283,7 +300,8 @@ def cancel_booking(
         watch.status = TripWatchStatus.ACTIVE
         try:
             calendar_result = remove_booking_from_calendar(db=db, booking=booking, deal=deal)
-            booking.calendar_detail = f"Calendar unwind complete via {calendar_result.get('transport', 'local-safe')}."
+            calendar_transport = calendar_result.get("transport", "local-safe")
+            booking.calendar_detail = f"Calendar unwind complete via {calendar_transport}."
         except Exception as exc:  # noqa: BLE001
             booking.calendar_detail = f"Calendar unwind failed: {exc}"
         if provider_result.refund_received > 0:
@@ -308,7 +326,10 @@ def cancel_booking(
         if provider_result.status == CancellationStatus.REFUNDED
         else "booking.cancellation_denied",
         subject="TRAMP cancellation update",
-        body=f"Cancellation state for booking {booking.provider_booking_ref or booking.id}: {provider_result.status.value}.",
+        body=(
+            "Cancellation state for booking "
+            f"{booking.provider_booking_ref or booking.id}: {provider_result.status.value}."
+        ),
         booking=booking,
         deal=deal,
     )
@@ -344,6 +365,7 @@ def serialize_booking(
     user: User,
     booking: Booking,
     idempotent_replay: bool = False,
+    tramp_stamps_awarded: int = 0,
 ) -> BookingResponse:
     deal = get_owned_deal_record(db=db, user=user, deal_id=booking.deal_id)
     cancellation = _latest_cancellation_for_booking(db=db, booking=booking)
@@ -396,6 +418,8 @@ def serialize_booking(
             }
             for delivery in deliveries
         ],
+        tramp_stamps_awarded=tramp_stamps_awarded,
+        tramp_stamp_balance=stamp_balance(db=db, user_id=user.id),
         idempotent_replay=idempotent_replay,
     )
 
