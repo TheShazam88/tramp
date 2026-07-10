@@ -16,6 +16,7 @@ ACTIVE_PREDICATE = (
     "status IN ('STARTED', 'REVALIDATED') OR recovery_required IS TRUE"
 )
 LEGACY_PREDICATE = "status IN ('STARTED', 'REVALIDATED')"
+SAFE_PRE_PROVIDER_CODES = ("deal_expired",)
 
 
 def _require_unique_active_deals() -> None:
@@ -60,28 +61,19 @@ def upgrade() -> None:
             server_default=sa.false(),
         ),
     )
-    op.execute(
+    op.get_bind().execute(
         sa.text(
             """
             UPDATE booking_attempts
             SET recovery_required = TRUE
-            WHERE response_payload_json->>'conflict_code'
-                IN ('pending_ticketing', 'provider_failed')
-               OR (
-                    status = 'FAILED'
-                    AND COALESCE(response_payload_json->>'conflict_code', '') = ''
-                    AND (
-                        provider IS NOT NULL
-                        OR provider_booking_ref IS NOT NULL
-                        OR provider_correlation_id IS NOT NULL
-                        OR (
-                            response_payload_json IS NOT NULL
-                            AND response_payload_json <> 'null'::jsonb
-                        )
-                    )
-               )
+            WHERE status = 'FAILED'
+              AND COALESCE(response_payload_json->>'conflict_code', '')
+                  NOT IN :safe_pre_provider_codes
             """
-        )
+        ).bindparams(
+            sa.bindparam("safe_pre_provider_codes", expanding=True)
+        ),
+        {"safe_pre_provider_codes": SAFE_PRE_PROVIDER_CODES},
     )
     op.drop_index(INDEX_NAME, table_name="booking_attempts")
     _require_unique_active_deals()

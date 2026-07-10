@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import os
+import runpy
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -45,6 +46,7 @@ from app.db.models import (
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_ROOT = BACKEND_ROOT / "alembic" / "versions"
 INITIAL_REVISION = MIGRATION_ROOT / "20260629_0001_initial_schema.py"
+RECOVERY_REVISION = MIGRATION_ROOT / "20260710_0007_booking_recovery_required.py"
 
 PRE_V2_TABLES = {
     "audit_log",
@@ -108,6 +110,11 @@ def _migration_operations(path: Path, operation: str) -> list[str]:
     return names
 
 
+def _safe_pre_provider_codes() -> tuple[str, ...]:
+    namespace = runpy.run_path(str(RECOVERY_REVISION))
+    return tuple(namespace["SAFE_PRE_PROVIDER_CODES"])
+
+
 def test_historical_migrations_do_not_import_live_orm_metadata() -> None:
     violations: list[str] = []
     for migration in sorted(MIGRATION_ROOT.glob("*.py")):
@@ -136,6 +143,10 @@ def test_initial_revision_explicitly_owns_only_pre_v2_schema() -> None:
     assert set(_migration_operations(INITIAL_REVISION, "drop_table")) == PRE_V2_TABLES
     assert POST_V1_TABLES.isdisjoint(source.split('"'))
     assert POST_V1_COLUMNS.isdisjoint(source.split('"'))
+
+
+def test_0007_safe_pre_provider_allowlist_is_explicit() -> None:
+    assert _safe_pre_provider_codes() == ("deal_expired",)
 
 
 def _migration_database_url() -> str:
@@ -643,13 +654,14 @@ def test_0006_rejects_duplicate_unresolved_deal_claims_without_data_loss() -> No
         engine.dispose()
 
 
-def test_0007_backfills_only_code_less_failures_with_provider_evidence() -> None:
+def test_0007_fails_closed_for_code_less_failures_and_allows_safe_codes() -> None:
     database_url = _migration_database_url()
     _reset_database(database_url)
     _run_alembic(database_url, "upgrade", "20260710_0006")
     rows = _seed_operational_rows(database_url)
     safe_attempt_id = uuid4()
     safe_deal_id = uuid4()
+    safe_code = _safe_pre_provider_codes()[0]
 
     engine = create_engine(database_url)
     try:
@@ -673,8 +685,11 @@ def test_0007_backfills_only_code_less_failures_with_provider_evidence() -> None
                 .where(BookingAttempt.id == rows["attempt"])
                 .values(
                     status=BookingAttemptStatus.FAILED,
-                    provider="legacy-provider",
+                    provider=None,
+                    provider_booking_ref=None,
+                    provider_correlation_id=None,
                     response_payload_json=None,
+                    error_text="legacy connector timeout",
                     finished_at=datetime.now(UTC),
                 )
             )
@@ -688,7 +703,10 @@ def test_0007_backfills_only_code_less_failures_with_provider_evidence() -> None
                     status=BookingAttemptStatus.FAILED,
                     provider=None,
                     provider_correlation_id=None,
-                    response_payload_json=None,
+                    response_payload_json={
+                        "conflict_code": safe_code,
+                        "safe_to_retry": True,
+                    },
                     started_at=datetime.now(UTC),
                     finished_at=datetime.now(UTC),
                 )
