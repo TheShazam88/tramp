@@ -67,6 +67,19 @@ def upgrade() -> None:
             SET recovery_required = TRUE
             WHERE response_payload_json->>'conflict_code'
                 IN ('pending_ticketing', 'provider_failed')
+               OR (
+                    status = 'FAILED'
+                    AND COALESCE(response_payload_json->>'conflict_code', '') = ''
+                    AND (
+                        provider IS NOT NULL
+                        OR provider_booking_ref IS NOT NULL
+                        OR provider_correlation_id IS NOT NULL
+                        OR (
+                            response_payload_json IS NOT NULL
+                            AND response_payload_json <> 'null'::jsonb
+                        )
+                    )
+               )
             """
         )
     )

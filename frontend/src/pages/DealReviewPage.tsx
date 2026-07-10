@@ -278,34 +278,14 @@ export function DealReviewPage() {
         setBookingFeedback({ kind: "status", message: conflictAttempt.message ?? "" });
         return;
       }
-      if (result.recoveryRequired) {
-        const recoveryAttempt: StoredBookingAttempt = {
-          ...storedAttempt,
-          state: "manual_recovery",
-          code: result.code,
-          message: result.message,
-        };
-        persistLogicalAttempt(recoveryAttempt);
-        setAttemptAllowsRetry(false);
-        setAutomaticPollScheduled(false);
-        setShowApprovalForm(true);
-        setBookingFeedback({
-          kind: "status",
-          message: `${result.message} Recovery remains locked until explicit provider reconciliation is available.`,
-        });
-        return;
-      }
       if (result.booking) {
         await completeBookingSuccess(result.booking);
         return;
       }
-      if (result.safeToRetry) {
-        clearLogicalAttempt();
-        setBookingFeedback({ kind: "error", message: result.message });
-        setShowApprovalForm(true);
-        return;
-      }
-      if (result.code === "attempt_in_progress") {
+      const activeAttempt =
+        result.code === "attempt_in_progress" ||
+        ["started", "revalidated"].includes(result.status.toLowerCase());
+      if (activeAttempt) {
         const automaticChecks = reconciliationPollCountRef.current;
         if (automaticChecks < MAX_AUTOMATIC_RECONCILIATION_CHECKS) {
           const pollingAttempt: StoredBookingAttempt = {
@@ -339,6 +319,29 @@ export function DealReviewPage() {
           kind: "status",
           message: `${result.message} Automatic checks stopped. Use Check again for a manual status check.`,
         });
+        return;
+      }
+      if (result.recoveryRequired) {
+        const recoveryAttempt: StoredBookingAttempt = {
+          ...storedAttempt,
+          state: "manual_recovery",
+          code: result.code,
+          message: result.message,
+        };
+        persistLogicalAttempt(recoveryAttempt);
+        setAttemptAllowsRetry(false);
+        setAutomaticPollScheduled(false);
+        setShowApprovalForm(true);
+        setBookingFeedback({
+          kind: "status",
+          message: `${result.message} Recovery remains locked until explicit provider reconciliation is available.`,
+        });
+        return;
+      }
+      if (result.safeToRetry) {
+        clearLogicalAttempt();
+        setBookingFeedback({ kind: "error", message: result.message });
+        setShowApprovalForm(true);
         return;
       }
 

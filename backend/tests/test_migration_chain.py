@@ -643,6 +643,85 @@ def test_0006_rejects_duplicate_unresolved_deal_claims_without_data_loss() -> No
         engine.dispose()
 
 
+def test_0007_backfills_only_code_less_failures_with_provider_evidence() -> None:
+    database_url = _migration_database_url()
+    _reset_database(database_url)
+    _run_alembic(database_url, "upgrade", "20260710_0006")
+    rows = _seed_operational_rows(database_url)
+    safe_attempt_id = uuid4()
+    safe_deal_id = uuid4()
+
+    engine = create_engine(database_url)
+    try:
+        with Session(engine) as db:
+            db.add(
+                Deal(
+                    id=safe_deal_id,
+                    watch_id=rows["watch"],
+                    kind="flight",
+                    source="safe-pre-provider",
+                    total_price=Decimal("321.00"),
+                    currency="USD",
+                    framing=DealFraming.BEST_VALUE,
+                    fingerprint_hash=f"safe-pre-provider-{safe_deal_id}",
+                    status=DealStatus.PROPOSED,
+                )
+            )
+            db.flush()
+            db.execute(
+                BookingAttempt.__table__.update()
+                .where(BookingAttempt.id == rows["attempt"])
+                .values(
+                    status=BookingAttemptStatus.FAILED,
+                    provider="legacy-provider",
+                    response_payload_json=None,
+                    finished_at=datetime.now(UTC),
+                )
+            )
+            db.execute(
+                BookingAttempt.__table__.insert().values(
+                    id=safe_attempt_id,
+                    deal_id=safe_deal_id,
+                    booking_id=None,
+                    watch_id=rows["watch"],
+                    idempotency_key=f"safe-pre-provider-{safe_attempt_id}",
+                    status=BookingAttemptStatus.FAILED,
+                    provider=None,
+                    provider_correlation_id=None,
+                    response_payload_json=None,
+                    started_at=datetime.now(UTC),
+                    finished_at=datetime.now(UTC),
+                )
+            )
+            db.commit()
+    finally:
+        engine.dispose()
+
+    _run_alembic(database_url, "upgrade", "head")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            recovery_states = {
+                row.id: row.recovery_required
+                for row in connection.execute(
+                    text(
+                        "SELECT id, recovery_required FROM booking_attempts "
+                        "WHERE id IN (:provider_attempt_id, :safe_attempt_id)"
+                    ),
+                    {
+                        "provider_attempt_id": rows["attempt"],
+                        "safe_attempt_id": safe_attempt_id,
+                    },
+                )
+            }
+    finally:
+        engine.dispose()
+
+    assert recovery_states[rows["attempt"]] is True
+    assert recovery_states[safe_attempt_id] is False
+
+
 def test_0007_rejects_duplicate_recovery_claims_without_data_loss() -> None:
     database_url = _migration_database_url()
     _reset_database(database_url)

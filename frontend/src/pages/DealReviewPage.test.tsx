@@ -279,6 +279,7 @@ describe("DealReviewPage booking execution", () => {
         status: "booked",
         code: "booked",
         message: "Booking confirmed from the saved booking record.",
+        recoveryRequired: true,
         booking: approvalResult,
       }),
     );
@@ -410,7 +411,9 @@ describe("DealReviewPage booking execution", () => {
       .mockResolvedValueOnce(
         reconciliation({
           idempotencyKey: "polling-attempt-key",
+          status: "revalidated",
           code: "attempt_in_progress",
+          recoveryRequired: true,
         }),
       )
       .mockResolvedValueOnce(
@@ -451,7 +454,9 @@ describe("DealReviewPage booking execution", () => {
     reconcileAttempt.mockResolvedValue(
       reconciliation({
         idempotencyKey: "bounded-attempt-key",
+        status: "revalidated",
         code: "attempt_in_progress",
+        recoveryRequired: true,
       }),
     );
 
