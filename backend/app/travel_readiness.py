@@ -33,12 +33,20 @@ class CtaAction:
     detail: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ReadinessResolution:
+    code: str
+    label: str
+    path: str
+
+
 @dataclass(slots=True)
 class ReadinessAssessment:
     score: int
     label: str
     blockers: list[str]
     warnings: list[str]
+    resolutions: list[ReadinessResolution]
 
 
 @dataclass(slots=True)
@@ -116,21 +124,50 @@ def build_deal_readiness_assessment(
 ) -> ReadinessAssessment:
     blockers: list[str] = []
     warnings: list[str] = []
+    resolutions: list[ReadinessResolution] = []
     score = 100
 
     if watch.status != TripWatchStatus.ACTIVE:
         blockers.append("Watch is paused or fulfilled, so booking should not start from this card.")
+        resolutions.append(
+            ReadinessResolution(
+                code="watch_unavailable",
+                label="Open watches",
+                path="/watches",
+            )
+        )
         score -= 30
 
     if deal is None:
         blockers.append("No live deal is attached to this watch yet.")
+        resolutions.append(
+            ReadinessResolution(
+                code="deal_missing",
+                label="Search for a live deal",
+                path="/watches",
+            )
+        )
         score -= 40
     else:
         if deal.status.value not in {"proposed", "confirmed"}:
             blockers.append("This deal is no longer bookable in its current state.")
+            resolutions.append(
+                ReadinessResolution(
+                    code="deal_not_bookable",
+                    label="Open watches",
+                    path="/watches",
+                )
+            )
             score -= 30
         if _deal_is_expired(deal):
             blockers.append("This deal has expired and must be refreshed before booking.")
+            resolutions.append(
+                ReadinessResolution(
+                    code="deal_expired",
+                    label="Refresh this watch",
+                    path="/watches",
+                )
+            )
             score -= 30
         if source_is_simulated(deal.source):
             warnings.append("This deal uses simulated inventory and is not ready for live booking.")
@@ -138,14 +175,35 @@ def build_deal_readiness_assessment(
 
     if not user.totp_secret:
         blockers.append("Two-factor authentication is required before secure approval.")
+        resolutions.append(
+            ReadinessResolution(
+                code="two_factor_required",
+                label="Set up two-factor authentication",
+                path="/setup/2fa",
+            )
+        )
         score -= 20
 
     if not payment_methods:
         blockers.append("Add a payment method before booking.")
+        resolutions.append(
+            ReadinessResolution(
+                code="payment_method_required",
+                label="Add payment method",
+                path="/profile",
+            )
+        )
         score -= 20
 
     if not travelers:
         blockers.append("Add at least one traveler to this watch before booking.")
+        resolutions.append(
+            ReadinessResolution(
+                code="traveler_required",
+                label="Add traveler",
+                path="/profile",
+            )
+        )
         score -= 20
 
     requires_passport = watch.trip_mode != TripMode.HOTELS_ONLY
@@ -172,6 +230,13 @@ def build_deal_readiness_assessment(
         blockers.append(
             "Complete passport details are missing for: " + ", ".join(passport_gaps) + "."
         )
+        resolutions.append(
+            ReadinessResolution(
+                code="passport_details_required",
+                label="Complete passport details",
+                path="/profile",
+            )
+        )
         score -= min(25, 8 * len(passport_gaps))
 
     if not live_inventory_available:
@@ -182,6 +247,13 @@ def build_deal_readiness_assessment(
             score -= 10
         else:
             blockers.append("Live provider inventory is unavailable while mock data is disabled.")
+            resolutions.append(
+                ReadinessResolution(
+                    code="live_inventory_required",
+                    label="Review provider integrations",
+                    path="/admin/integrations",
+                )
+            )
             score -= 20
 
     if deal is not None and deal.expires_at is not None:
@@ -201,6 +273,7 @@ def build_deal_readiness_assessment(
         label=label,
         blockers=blockers,
         warnings=warnings,
+        resolutions=resolutions,
     )
 
 

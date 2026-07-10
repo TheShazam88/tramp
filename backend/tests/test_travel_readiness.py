@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
+from app.api.schemas.watches import ReadinessResponse
 from app.db.models import (
     Deal,
     DealFraming,
@@ -144,6 +146,14 @@ def test_deal_readiness_blocks_when_booking_prereqs_are_missing() -> None:
     assert any("Two-factor authentication" in blocker for blocker in readiness.blockers)
     assert any("payment method" in blocker for blocker in readiness.blockers)
     assert any("passport details" in blocker for blocker in readiness.blockers)
+    resolutions = {resolution.code: resolution for resolution in readiness.resolutions}
+    assert resolutions["two_factor_required"].path == "/setup/2fa"
+    assert resolutions["payment_method_required"].path == "/profile"
+    assert resolutions["passport_details_required"].path == "/profile"
+    assert resolutions["live_inventory_required"].path == "/admin/integrations"
+    assert resolutions["payment_method_required"].label == "Add payment method"
+    response = ReadinessResponse.model_validate(asdict(readiness))
+    assert {resolution.code for resolution in response.resolutions} == set(resolutions)
 
 
 def test_hotel_only_readiness_does_not_require_passport() -> None:

@@ -93,6 +93,7 @@ export const dashboardData: DashboardData = {
         label: "Ready",
         blockers: [],
         warnings: ["Partner passport expires four months after travel."],
+        resolutions: [],
       },
       ctaActions: [
         { key: "open_deal", label: "Open deal", tone: "primary", enabled: true },
@@ -118,6 +119,7 @@ export const dashboardData: DashboardData = {
         label: "Almost ready",
         blockers: [],
         warnings: ["Add one more passport before you try to book the full family bundle."],
+        resolutions: [],
       },
       ctaActions: [
         { key: "search_now", label: "Search now", tone: "primary", enabled: true },
@@ -141,6 +143,7 @@ export const dashboardData: DashboardData = {
         label: "Blocked",
         blockers: ["Watch is paused."],
         warnings: [],
+        resolutions: [{ code: "watch_unavailable", label: "Open watches", path: "/watches" }],
       },
       ctaActions: [
         { key: "resume_watch", label: "Resume watch", tone: "ghost", enabled: true },
@@ -245,6 +248,7 @@ export const dealData: DealData = {
     label: "Ready",
     blockers: [],
     warnings: ["Partner passport expires four months after travel."],
+    resolutions: [],
   },
   badges: [
     { label: "better than usual", tone: "value" },

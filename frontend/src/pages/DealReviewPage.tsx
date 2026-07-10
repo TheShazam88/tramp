@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
 
-import { ApiError } from "@/api/client";
+import { bookingErrorKind, getApiErrorMessage } from "@/api/errors";
 import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
-import type { BookDealRequest, DealData } from "@/api/types";
+import type { BookDealRequest, DealApprovalResult, DealData } from "@/api/types";
 import {
   Badge,
   Button,
@@ -14,21 +14,6 @@ import {
   SectionHeading,
   Surface,
 } from "@/components/ui/primitives";
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof ApiError && typeof error.payload === "object" && error.payload) {
-    const detail = (error.payload as { detail?: unknown }).detail;
-    if (typeof detail === "string") {
-      return detail;
-    }
-  }
-
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
-}
 
 function toneForStatus(status?: string | null) {
   switch (status) {
@@ -47,44 +32,31 @@ function toneForStatus(status?: string | null) {
   }
 }
 
-function readinessResolutionFor(blocker: string) {
-  const normalized = blocker.toLowerCase();
-
-  if (
-    normalized.includes("payment") ||
-    normalized.includes("traveler") ||
-    normalized.includes("passport")
-  ) {
-    return { to: "/profile", label: "Open profile setup" };
-  }
-  if (normalized.includes("two-factor") || normalized.includes("authentication")) {
-    return { to: "/setup/2fa", label: "Set up two-factor authentication" };
-  }
-  if (normalized.includes("provider") || normalized.includes("inventory")) {
-    return { to: "/admin/integrations", label: "Review provider integrations" };
-  }
-  if (
-    normalized.includes("watch") ||
-    normalized.includes("deal") ||
-    normalized.includes("expired") ||
-    normalized.includes("refresh")
-  ) {
-    return { to: "/watches", label: "Open watches" };
-  }
-  return { to: "/profile/presets", label: "Review profile presets" };
-}
-
 interface DealReviewLocationState {
   reviewSeed?: Partial<DealData>;
 }
 
+type BookingFeedback = {
+  kind: "success" | "error";
+  message: string;
+};
+
+type BookingMutationOutcome =
+  | { result: DealApprovalResult; errorKind?: never; message?: never }
+  | {
+      result?: never;
+      errorKind: "definite" | "ambiguous";
+      message: string;
+    };
+
 export function DealReviewPage() {
   const { dealId = "deal-118400" } = useParams();
   const location = useLocation();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const watchId = searchParams.get("watchId") ?? undefined;
   const approvalTokenFromLink = searchParams.get("approvalToken") ?? "";
+  const approvalTokenQueryKey = queryKeys.approvalToken(dealId, approvalTokenFromLink);
   const reviewSeed = useMemo(
     () => ((location.state as DealReviewLocationState | null)?.reviewSeed ?? null),
     [location.state],
@@ -94,6 +66,15 @@ export function DealReviewPage() {
   const [totpCode, setTotpCode] = useState("");
   const [masterKeyPassphrase, setMasterKeyPassphrase] = useState("");
   const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
+  const [bookingFeedback, setBookingFeedback] = useState<BookingFeedback | null>(null);
+  const [bookingAttemptPending, setBookingAttemptPending] = useState(false);
+  const bookingFeedbackRef = useRef<HTMLDivElement>(null);
+  const bookingRequestRef = useRef<BookDealRequest | null>(null);
+  const bookingAttemptPendingRef = useRef(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
+  const mintedApprovalTokenRef = useRef<string | null>(null);
+  const consumedApprovalTokenRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
 
   const { data, error } = useQuery({
     queryKey: queryKeys.deal(dealId, watchId),
@@ -104,50 +85,85 @@ export function DealReviewPage() {
     queryFn: travelWatchApi.getProfileWorkspace,
   });
   const approvalTokenVerification = useQuery({
-    queryKey: ["deal-approval-token", dealId, approvalTokenFromLink],
+    queryKey: approvalTokenQueryKey,
     queryFn: () => travelWatchApi.verifyApprovalToken({ dealId, token: approvalTokenFromLink }),
     enabled: approvalTokenFromLink.length > 0,
   });
 
-  const bookingMutation = useMutation({
-    mutationFn: (payload: BookDealRequest) => travelWatchApi.bookDeal(payload),
-    retry: false,
-    onSuccess: async (result) => {
-      const bookingDetails = [
-        result.confirmationNote,
-        result.provider ? `Provider: ${result.provider}.` : "",
-        result.amount ? `Amount: ${result.amount}.` : "",
-        result.bookingStatus ? `Status: ${result.bookingStatus.replace(/_/g, " ")}.` : "",
-      ].filter(Boolean);
-      setApprovalNotice(bookingDetails.join(" "));
-      setShowApprovalForm(false);
-      setPaymentMethodId("");
-      setTotpCode("");
-      setMasterKeyPassphrase("");
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.deal(dealId, watchId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.profile }),
-      ]);
+  const bookingMutation = useMutation<BookingMutationOutcome, never, void>({
+    mutationFn: async () => {
+      const payload = bookingRequestRef.current;
+      if (!payload) {
+        return {
+          errorKind: "definite",
+          message: "Secure booking details expired. Re-enter them and try again.",
+        };
+      }
+      try {
+        return { result: await travelWatchApi.bookDeal(payload) };
+      } catch (error) {
+        return {
+          errorKind: bookingErrorKind(error),
+          message: getApiErrorMessage(error, "Unable to complete this booking."),
+        };
+      }
     },
+    retry: false,
   });
+  const resetBookingMutation = bookingMutation.reset;
+  const resetBookingMutationRef = useRef(resetBookingMutation);
+  resetBookingMutationRef.current = resetBookingMutation;
 
   const rejectMutation = useMutation({
     mutationFn: (reason: string) => travelWatchApi.rejectDeal({ dealId, reason }),
     onSuccess: async (result) => {
       setApprovalNotice(result.detail);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.deal(dealId, watchId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dealVariants(dealId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
       ]);
     },
   });
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      bookingRequestRef.current = null;
+      bookingAttemptPendingRef.current = false;
+      idempotencyKeyRef.current = null;
+      mintedApprovalTokenRef.current = null;
+      consumedApprovalTokenRef.current = null;
+      resetBookingMutationRef.current();
+    };
+  }, []);
+
+  useEffect(() => {
+    bookingFeedbackRef.current?.focus();
+  }, [bookingFeedback]);
+
+  useEffect(() => {
+    const consumedToken = consumedApprovalTokenRef.current;
+    if (!approvalTokenFromLink && consumedToken) {
+      queryClient.removeQueries({
+        queryKey: queryKeys.approvalToken(dealId, consumedToken),
+        exact: true,
+      });
+      consumedApprovalTokenRef.current = null;
+    }
+  }, [approvalTokenFromLink, dealId, queryClient]);
+
+  const clearSensitiveFields = useCallback(() => {
+    setTotpCode("");
+    setMasterKeyPassphrase("");
+  }, []);
+
   if (!data) {
     return (
       <div className="stack">
-        <Surface>{error ? getErrorMessage(error, "Unable to load the deal review.") : "Loading deal review..."}</Surface>
+        <Surface>
+          {error ? getApiErrorMessage(error, "Unable to load the deal review.") : "Loading deal review..."}
+        </Surface>
       </div>
     );
   }
@@ -162,22 +178,17 @@ export function DealReviewPage() {
   const readinessBlockers = deal.readiness?.blockers ?? [];
   const hasReadinessBlockers = readinessBlockers.length > 0;
   const hasNoPaymentMethods = profileWorkspace?.paymentMethods.length === 0;
-  const readinessBlockersForGuidance = hasNoPaymentMethods
-    ? readinessBlockers.filter((blocker) => !blocker.toLowerCase().includes("payment"))
-    : readinessBlockers;
-  const readinessResolutionLinks = Array.from(
-    new Map(
-      readinessBlockersForGuidance.map((blocker) => {
-        const resolution = readinessResolutionFor(blocker);
-        return [resolution.to, resolution] as const;
-      }),
-    ).values(),
+  const readinessBlockersForGuidance = readinessBlockers;
+  const readinessResolutionLinks = (deal.readiness?.resolutions ?? []).filter(
+    (resolution) =>
+      !hasNoPaymentMethods || resolution.code !== "payment_method_required",
   );
   const linkedApprovalUnavailable =
     approvalTokenFromLink.length > 0 &&
     (approvalTokenVerification.isFetching ||
       approvalTokenVerification.isError ||
       approvalTokenVerification.data?.valid !== true);
+  const isBookingPending = bookingAttemptPending || bookingMutation.isPending;
   const bookingCanSubmit =
     data.approvalAvailable &&
     bookNowAction?.enabled !== false &&
@@ -185,15 +196,152 @@ export function DealReviewPage() {
     !hasReadinessBlockers &&
     paymentMethodId.length > 0 &&
     /^\d{6}$/.test(totpCode) &&
-    !bookingMutation.isPending &&
+    !isBookingPending &&
     !linkedApprovalUnavailable;
 
+  const completeBookingSuccess = async (result: DealApprovalResult) => {
+    const bookingDetails = [
+      result.confirmationNote,
+      result.provider ? `Provider: ${result.provider}.` : "",
+      result.amount ? `Amount: ${result.amount}.` : "",
+      result.bookingStatus ? `Status: ${result.bookingStatus.replace(/_/g, " ")}.` : "",
+    ].filter(Boolean);
+    idempotencyKeyRef.current = null;
+    mintedApprovalTokenRef.current = null;
+
+    if (approvalTokenFromLink) {
+      await queryClient.cancelQueries({ queryKey: approvalTokenQueryKey, exact: true });
+      consumedApprovalTokenRef.current = approvalTokenFromLink;
+      const nextSearchParams = new URLSearchParams(searchParams);
+      nextSearchParams.delete("approvalToken");
+      setSearchParams(nextSearchParams, { replace: true });
+      await Promise.resolve();
+      queryClient.removeQueries({ queryKey: approvalTokenQueryKey, exact: true });
+    }
+
+    await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: queryKeys.dealVariants(dealId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.profile }),
+    ]);
+    if (mountedRef.current) {
+      setBookingFeedback({ kind: "success", message: bookingDetails.join(" ") });
+      setShowApprovalForm(false);
+      setPaymentMethodId("");
+    }
+  };
+
+  const submitBooking = async () => {
+    if (!bookingCanSubmit || bookingAttemptPendingRef.current) {
+      return;
+    }
+
+    bookingAttemptPendingRef.current = true;
+    setBookingAttemptPending(true);
+    setBookingFeedback(null);
+    const idempotencyKey = idempotencyKeyRef.current ?? crypto.randomUUID();
+    idempotencyKeyRef.current = idempotencyKey;
+
+    try {
+      let approvalToken = approvalTokenFromLink;
+      if (!approvalToken) {
+        if (!mintedApprovalTokenRef.current) {
+          const approval = await travelWatchApi.createApprovalToken(dealId);
+          if (!mountedRef.current) {
+            return;
+          }
+          if (!approval.token) {
+            throw new Error("Unable to create a secure approval token for this booking.");
+          }
+          mintedApprovalTokenRef.current = approval.token;
+        }
+        approvalToken = mintedApprovalTokenRef.current ?? "";
+      }
+      if (!approvalToken) {
+        throw new Error("Unable to create a secure approval token for this booking.");
+      }
+
+      bookingRequestRef.current = {
+        dealId,
+        approvalToken,
+        paymentMethodId,
+        totpCode,
+        masterKeyPassphrase,
+        idempotencyKey,
+      };
+      const outcome = await bookingMutation.mutateAsync();
+      bookingRequestRef.current = null;
+      if (mountedRef.current) {
+        clearSensitiveFields();
+        resetBookingMutation();
+      }
+      if (!mountedRef.current) {
+        return;
+      }
+      if (outcome.result) {
+        await completeBookingSuccess(outcome.result);
+        return;
+      }
+
+      if (outcome.errorKind === "ambiguous") {
+        let reconciledBooking: DealApprovalResult | null = null;
+        try {
+          reconciledBooking = await travelWatchApi.getBookingForDeal(dealId);
+        } catch {
+          reconciledBooking = null;
+        }
+        if (!mountedRef.current) {
+          return;
+        }
+        if (reconciledBooking) {
+          await completeBookingSuccess(reconciledBooking);
+          return;
+        }
+        setBookingFeedback({
+          kind: "error",
+          message:
+            "The booking outcome could not be confirmed. Re-enter the security details to retry this same booking attempt.",
+        });
+        return;
+      }
+
+      idempotencyKeyRef.current = null;
+      mintedApprovalTokenRef.current = null;
+      setBookingFeedback({ kind: "error", message: outcome.message });
+    } catch (submissionError) {
+      idempotencyKeyRef.current = null;
+      mintedApprovalTokenRef.current = null;
+      if (mountedRef.current) {
+        setBookingFeedback({
+          kind: "error",
+          message: getApiErrorMessage(submissionError, "Unable to start this secure booking."),
+        });
+      }
+    } finally {
+      bookingRequestRef.current = null;
+      bookingAttemptPendingRef.current = false;
+      if (mountedRef.current) {
+        clearSensitiveFields();
+        setBookingAttemptPending(false);
+        resetBookingMutation();
+      }
+    }
+  };
+
   const closeSecureBookingForm = () => {
+    if (bookingAttemptPendingRef.current || isBookingPending) {
+      return;
+    }
+    const hasUnresolvedAttempt = Boolean(idempotencyKeyRef.current);
     setShowApprovalForm(false);
-    setPaymentMethodId("");
-    setTotpCode("");
-    setMasterKeyPassphrase("");
-    bookingMutation.reset();
+    if (!hasUnresolvedAttempt) {
+      setPaymentMethodId("");
+      mintedApprovalTokenRef.current = null;
+    }
+    clearSensitiveFields();
+    bookingRequestRef.current = null;
+    resetBookingMutation();
   };
 
   return (
@@ -211,12 +359,16 @@ export function DealReviewPage() {
         />
 
         {data.fallbackNote ? <div className="notice notice-value">{data.fallbackNote}</div> : null}
-        {error ? <div className="notice notice-alert">{getErrorMessage(error, "Unable to refresh this deal.")}</div> : null}
+        {error ? (
+          <div className="notice notice-alert" role="alert">
+            {getApiErrorMessage(error, "Unable to refresh this deal.")}
+          </div>
+        ) : null}
         {approvalNotice ? <div className="notice notice-value">{approvalNotice}</div> : null}
         {approvalTokenFromLink ? (
           approvalTokenVerification.isError ? (
-            <div className="notice notice-alert">
-              {getErrorMessage(
+            <div className="notice notice-alert" role="alert">
+              {getApiErrorMessage(
                 approvalTokenVerification.error,
                 "This secure approval link is no longer valid. Generate a fresh review link from the deal.",
               )}
@@ -228,14 +380,9 @@ export function DealReviewPage() {
             </div>
           ) : null
         ) : null}
-        {bookingMutation.isError ? (
-          <div className="notice notice-alert">
-            {getErrorMessage(bookingMutation.error, "Unable to complete this booking.")}
-          </div>
-        ) : null}
         {rejectMutation.isError ? (
-          <div className="notice notice-alert">
-            {getErrorMessage(rejectMutation.error, "Unable to record rejection feedback for this deal.")}
+          <div className="notice notice-alert" role="alert">
+            {getApiErrorMessage(rejectMutation.error, "Unable to record rejection feedback for this deal.")}
           </div>
         ) : null}
 
@@ -369,6 +516,21 @@ export function DealReviewPage() {
           </Surface>
         ) : null}
 
+        {bookingFeedback ? (
+          <div
+            ref={bookingFeedbackRef}
+            className={
+              bookingFeedback.kind === "success"
+                ? "notice notice-value"
+                : "notice notice-alert"
+            }
+            role={bookingFeedback.kind === "success" ? "status" : "alert"}
+            tabIndex={-1}
+          >
+            {bookingFeedback.message}
+          </div>
+        ) : null}
+
         {showApprovalForm ? (
           <Surface className="inset-card approval-card">
             <SectionHeading
@@ -386,6 +548,7 @@ export function DealReviewPage() {
                     className="text-input"
                     value={paymentMethodId}
                     onChange={(event) => setPaymentMethodId(event.target.value)}
+                    disabled={isBookingPending}
                   >
                     <option value="">Select a payment method</option>
                     {profileWorkspace.paymentMethods.map((paymentMethod) => {
@@ -428,6 +591,7 @@ export function DealReviewPage() {
                   value={totpCode}
                   onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
                   placeholder="123456"
+                  disabled={isBookingPending}
                 />
               </div>
 
@@ -437,11 +601,12 @@ export function DealReviewPage() {
                   id="booking-master-key"
                   className="text-input"
                   type="password"
-                  autoComplete="off"
+                  autoComplete="new-password"
                   spellCheck={false}
                   value={masterKeyPassphrase}
                   onChange={(event) => setMasterKeyPassphrase(event.target.value)}
                   placeholder="Leave blank when not required"
+                  disabled={isBookingPending}
                 />
                 <p className="helper-copy">
                   Your backend security mode determines whether this passphrase is required.
@@ -450,13 +615,13 @@ export function DealReviewPage() {
             </div>
 
             {profileError ? (
-              <div className="notice notice-alert">
-                {getErrorMessage(profileError, "Unable to load saved payment methods.")}
+              <div className="notice notice-alert" role="alert">
+                {getApiErrorMessage(profileError, "Unable to load saved payment methods.")}
               </div>
             ) : null}
 
             {!data.approvalAvailable ? (
-              <div className="notice notice-alert">
+              <div className="notice notice-alert" role="alert">
                 Booking approval is unavailable for this deal right now.
               </div>
             ) : null}
@@ -464,19 +629,17 @@ export function DealReviewPage() {
             <div className="button-row">
               <Button
                 type="button"
-                onClick={() =>
-                  bookingMutation.mutate({
-                    dealId,
-                    paymentMethodId,
-                    totpCode,
-                    masterKeyPassphrase,
-                  })
-                }
+                onClick={() => void submitBooking()}
                 disabled={!bookingCanSubmit}
               >
-                {bookingMutation.isPending ? "Booking..." : "Book now"}
+                {isBookingPending ? "Booking..." : "Book now"}
               </Button>
-              <Button type="button" variant="secondary" onClick={closeSecureBookingForm}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={closeSecureBookingForm}
+                disabled={isBookingPending}
+              >
                 Cancel
               </Button>
             </div>
@@ -505,7 +668,12 @@ export function DealReviewPage() {
               type="button"
               variant="secondary"
               onClick={() => rejectMutation.mutate(value)}
-              disabled={rejectMutation.isPending || dealIntentLocked || ignoreAction?.enabled === false}
+              disabled={
+                rejectMutation.isPending ||
+                isBookingPending ||
+                dealIntentLocked ||
+                ignoreAction?.enabled === false
+              }
             >
               {rejectMutation.isPending ? "Saving..." : label}
             </Button>
@@ -537,7 +705,7 @@ export function DealReviewPage() {
           </ul>
           <div className="button-row">
             {readinessResolutionLinks.map((resolution) => (
-              <Button key={resolution.to} variant="secondary" to={resolution.to}>
+              <Button key={resolution.code} variant="secondary" to={resolution.path}>
                 {resolution.label}
               </Button>
             ))}
@@ -549,15 +717,22 @@ export function DealReviewPage() {
         <Button
           type="button"
           onClick={() => {
+            if (isBookingPending) {
+              return;
+            }
             if (showApprovalForm) {
               closeSecureBookingForm();
               return;
             }
-            bookingMutation.reset();
+            resetBookingMutation();
             setApprovalNotice(null);
+            if (!idempotencyKeyRef.current) {
+              setBookingFeedback(null);
+            }
             setShowApprovalForm(true);
           }}
           disabled={
+            isBookingPending ||
             bookingLocked ||
             bookNowAction?.enabled === false ||
             hasReadinessBlockers
@@ -569,7 +744,12 @@ export function DealReviewPage() {
           type="button"
           variant="secondary"
           onClick={() => rejectMutation.mutate("other")}
-          disabled={rejectMutation.isPending || dealIntentLocked || ignoreAction?.enabled === false}
+          disabled={
+            rejectMutation.isPending ||
+            isBookingPending ||
+            dealIntentLocked ||
+            ignoreAction?.enabled === false
+          }
         >
           {ignoreAction?.label || "Ignore"}
         </Button>

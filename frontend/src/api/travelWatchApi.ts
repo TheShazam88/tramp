@@ -286,6 +286,11 @@ interface WatchRaw {
     label?: string;
     blockers?: string[];
     warnings?: string[];
+    resolutions?: Array<{
+      code?: string;
+      label?: string;
+      path?: string;
+    }>;
   } | null;
   badges?: Array<{ label?: string; tone?: string }> | null;
   cta_actions?: Array<{
@@ -761,6 +766,11 @@ function mapReadiness(
         label?: string;
         blockers?: string[];
         warnings?: string[];
+        resolutions?: Array<{
+          code?: string;
+          label?: string;
+          path?: string;
+        }>;
       }
     | null
     | undefined,
@@ -773,6 +783,13 @@ function mapReadiness(
     label: coerceString(readiness.label) || "Needs setup",
     blockers: asStringList(readiness.blockers),
     warnings: asStringList(readiness.warnings),
+    resolutions: (readiness.resolutions ?? [])
+      .map((resolution) => ({
+        code: coerceString(resolution.code),
+        label: coerceString(resolution.label),
+        path: coerceString(resolution.path),
+      }))
+      .filter((resolution) => resolution.code && resolution.label && resolution.path),
   };
 }
 
@@ -1745,6 +1762,47 @@ function buildDealFromWatch(
   };
 }
 
+function mapBookingToApprovalResult(
+  booking: BookingRaw,
+  fallbackDealId: string,
+  confirmationNote = "Booking confirmed. Review bookings for ticketing, cancellation, and refund updates.",
+): DealApprovalResult {
+  const currency = booking.currency || booking.cancellation?.currency || "JPY";
+  return {
+    dealId: coerceString(booking.deal_id) || fallbackDealId,
+    bookingId: coerceString(booking.id) || undefined,
+    bookingStatus: coerceString(booking.status) || undefined,
+    provider: coerceString(booking.provider) || undefined,
+    amount: formatMoneyValue(booking.amount_charged, currency) || undefined,
+    confirmationNote,
+    cancellationStatus: coerceString(booking.cancellation?.status) || undefined,
+    refundStatus:
+      booking.cancellation?.refund_received
+        ? "Refund received"
+        : booking.cancellation?.refund_expected
+          ? "Refund pending"
+          : undefined,
+    refundAmount:
+      formatMoneyValue(booking.cancellation?.refund_received, booking.cancellation?.currency || currency) ||
+      formatMoneyValue(booking.cancellation?.refund_expected, booking.cancellation?.currency || currency) ||
+      undefined,
+    trampStampsAwarded: booking.tramp_stamps_awarded ?? 0,
+    trampStampBalance: booking.tramp_stamp_balance ?? 0,
+  };
+}
+
+function bookingItemsFromResponse(
+  response: BookingRaw[] | { items?: BookingRaw[]; bookings?: BookingRaw[] },
+) {
+  return Array.isArray(response)
+    ? response
+    : Array.isArray(response.items)
+      ? response.items
+      : Array.isArray(response.bookings)
+        ? response.bookings
+        : [];
+}
+
 function mapBookingRecord(raw: BookingRaw): BookingSummary {
   const currency =
     coerceString(raw.currency) || coerceString(raw.cancellation?.currency) || coerceString(raw.deal?.currency) || "JPY";
@@ -2031,7 +2089,7 @@ function buildWatchPayload(draft: WatchDraft) {
 }
 
 function mockProfileWorkspace(): ProfileWorkspace {
-  return emptyWorkspace({
+  const workspace = emptyWorkspace({
     id: "mock-user",
     email: "demo@example.com",
     role: "admin",
@@ -2040,12 +2098,35 @@ function mockProfileWorkspace(): ProfileWorkspace {
     telegramChatId: null,
     totpEnabled: true,
   });
+  workspace.paymentMethods = [
+    {
+      id: "mock-payment-primary",
+      label: "Demo Visa",
+      brand: "Visa",
+      cardholderName: "Demo Traveler",
+      cardNumber: "",
+      last4: "4242",
+      expMonth: "12",
+      expYear: "2030",
+      providerToken: "",
+      billingAddressLine1: "",
+      billingAddressCity: "",
+      billingAddressPostalCode: "",
+      billingCountry: "US",
+    },
+  ];
+  workspace.householdSummary.paymentMethodCount = 1;
+  workspace.householdSummary.hasPaymentMethod = true;
+  return workspace;
 }
 
 export const queryKeys = {
   dashboard: ["dashboard"] as const,
   watchDraft: (watchId?: string) => ["watch-draft", watchId ?? "new"] as const,
+  dealVariants: (dealId: string) => ["deal", dealId] as const,
   deal: (dealId: string, watchId?: string) => ["deal", dealId, watchId ?? "unscoped"] as const,
+  approvalToken: (dealId: string, token: string) =>
+    ["deal-approval-token", dealId, token] as const,
   bookings: ["bookings"] as const,
   profile: ["profile"] as const,
   integrations: ["integrations"] as const,
@@ -2222,15 +2303,8 @@ export const travelWatchApi = {
       "/bookings",
     ]);
     if (response) {
-      const items = Array.isArray(response)
-        ? response
-        : Array.isArray(response.items)
-          ? response.items
-          : Array.isArray(response.bookings)
-            ? response.bookings
-            : [];
       return {
-        items: items.map(mapBookingRecord),
+        items: bookingItemsFromResponse(response).map(mapBookingRecord),
         source: "live",
       };
     }
@@ -2251,6 +2325,43 @@ export const travelWatchApi = {
       fallbackNote:
         "Live bookings are not exposed by this backend yet. Showing the existing booking placeholders until the endpoint lands.",
     };
+  },
+
+  getBookingForDeal: async (dealId: string): Promise<DealApprovalResult | null> => {
+    if (useMockData) {
+      const booking = bookingsData.find((item) => item.dealId === dealId);
+      return withLatency(
+        booking
+          ? {
+              dealId,
+              bookingId: booking.id,
+              bookingStatus: booking.bookingStatus,
+              provider: booking.provider,
+              amount: booking.amount,
+              confirmationNote: "Booking confirmed from the saved booking record.",
+              cancellationStatus: booking.cancellationStatus,
+              refundStatus: booking.refundStatus,
+              refundAmount: booking.refundAmount,
+              trampStampsAwarded: 0,
+              trampStampBalance: 0,
+            }
+          : null,
+      );
+    }
+
+    const response = await apiClient.get<
+      BookingRaw[] | { items?: BookingRaw[]; bookings?: BookingRaw[] }
+    >("/bookings");
+    const booking = bookingItemsFromResponse(response).find(
+      (item) => coerceString(item.deal_id) === dealId,
+    );
+    return booking
+      ? mapBookingToApprovalResult(
+          booking,
+          dealId,
+          "Booking confirmed from the saved booking record after reconnecting.",
+        )
+      : null;
   },
 
   getProfileWorkspace: async (): Promise<ProfileWorkspace> => {
@@ -2357,42 +2468,15 @@ export const travelWatchApi = {
       });
     }
 
-    const idempotencyKey = crypto.randomUUID();
-    const approval = await travelWatchApi.createApprovalToken(payload.dealId);
-    if (!approval.token) {
-      throw new Error("Unable to create a secure approval token for this booking.");
-    }
-
     const booking = await apiClient.post<BookingRaw>("/bookings/approve", {
       deal_id: payload.dealId,
-      approval_token: approval.token,
+      approval_token: payload.approvalToken,
       totp_code: payload.totpCode,
       master_key_passphrase: payload.masterKeyPassphrase || undefined,
       payment_method_id: payload.paymentMethodId,
-      idempotency_key: idempotencyKey,
+      idempotency_key: payload.idempotencyKey,
     });
-    const currency = booking?.currency || booking?.cancellation?.currency || "JPY";
-    return {
-      dealId: coerceString(booking.deal_id) || payload.dealId,
-      bookingId: coerceString(booking.id) || undefined,
-      bookingStatus: coerceString(booking.status) || undefined,
-      provider: coerceString(booking.provider) || undefined,
-      amount: formatMoneyValue(booking.amount_charged, currency) || undefined,
-      confirmationNote: "Booking confirmed. Review bookings for ticketing, cancellation, and refund updates.",
-      cancellationStatus: coerceString(booking.cancellation?.status) || undefined,
-      refundStatus:
-        booking.cancellation?.refund_received
-          ? "Refund received"
-          : booking.cancellation?.refund_expected
-            ? "Refund pending"
-            : undefined,
-      refundAmount:
-        formatMoneyValue(booking.cancellation?.refund_received, booking.cancellation?.currency || currency) ||
-        formatMoneyValue(booking.cancellation?.refund_expected, booking.cancellation?.currency || currency) ||
-        undefined,
-      trampStampsAwarded: booking.tramp_stamps_awarded ?? 0,
-      trampStampBalance: booking.tramp_stamp_balance ?? 0,
-    };
+    return mapBookingToApprovalResult(booking, payload.dealId);
   },
 
   createApprovalToken: async (dealId: string) => {
@@ -2829,6 +2913,10 @@ export const travelWatchApi = {
   },
 
   savePaymentMethod: async (paymentMethod: Omit<PaymentMethodProfile, "id"> & { id?: string }) => {
+    if (useMockData) {
+      return withLatency(undefined);
+    }
+
     const billingAddress =
       paymentMethod.billingAddressLine1 &&
       paymentMethod.billingAddressCity &&
@@ -2876,6 +2964,10 @@ export const travelWatchApi = {
   },
 
   deletePaymentMethod: async (paymentMethodId: string) => {
+    if (useMockData) {
+      return withLatency(undefined);
+    }
+
     await apiClient.delete(`/profile/payment-methods/${paymentMethodId}`);
   },
 

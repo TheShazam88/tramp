@@ -258,11 +258,18 @@ class DashboardHighlightResponse(BaseModel):
     note: str
 
 
+class ReadinessResolutionResponse(BaseModel):
+    code: str
+    label: str
+    path: str
+
+
 class ReadinessResponse(BaseModel):
     score: int
     label: str
     blockers: list[str]
     warnings: list[str]
+    resolutions: list[ReadinessResolutionResponse] = Field(default_factory=list)
 
 
 class SemanticBadgeResponse(BaseModel):

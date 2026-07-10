@@ -2,11 +2,18 @@ export type WatchStatus = "active" | "paused" | "fulfilled";
 export type IntegrationState = "connected" | "attention" | "disabled" | "not_set";
 export type IntegrationEnvironment = "test" | "live" | "off";
 
+export interface ReadinessResolution {
+  code: string;
+  label: string;
+  path: string;
+}
+
 export interface ReadinessState {
   score: number;
   label: string;
   blockers: string[];
   warnings: string[];
+  resolutions: ReadinessResolution[];
 }
 
 export interface SemanticBadge {
@@ -197,9 +204,11 @@ export interface DealApprovalResult {
 
 export interface BookDealRequest {
   dealId: string;
+  approvalToken: string;
   paymentMethodId: string;
   totpCode: string;
   masterKeyPassphrase: string;
+  idempotencyKey: string;
 }
 
 export interface DealIntentResult {
