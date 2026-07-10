@@ -8,6 +8,7 @@ import {
   newWatchDraft,
 } from "@/api/mockData";
 import type {
+  BookDealRequest,
   BookingSummary,
   BookingsViewData,
   CurrentUser,
@@ -403,6 +404,8 @@ interface BookingRaw {
   ticketing_state?: string | null;
   calendar_event_id?: string | null;
   calendar_detail?: string | null;
+  tramp_stamps_awarded?: number | null;
+  tramp_stamp_balance?: number | null;
   title?: string | null;
   route?: string | null;
   when?: string | null;
@@ -1681,8 +1684,8 @@ function mapDealPayloadToView(
     approvalDetail:
       booking?.error_text ||
       (dealStatus === "confirmed"
-        ? "Approval intent has already been recorded for this deal."
-        : "Confirming this deal records secure approval intent with TOTP. Booking remains a later deterministic step."),
+        ? "Approval intent is recorded. Complete the secure booking with a saved payment method and TOTP."
+        : "Book now uses a server-verified approval token, TOTP, and a saved payment method to complete the booking."),
     readiness,
     badges,
     ctaActions,
@@ -2340,12 +2343,7 @@ export const travelWatchApi = {
     return { dealId: dealData.id, deal: { ...dealData, watchId }, fallback: true };
   },
 
-  approveDeal: async (payload: {
-    dealId: string;
-    watchId?: string;
-    totpCode: string;
-    masterKeyPassphrase: string;
-  }): Promise<DealApprovalResult> => {
+  bookDeal: async (payload: BookDealRequest): Promise<DealApprovalResult> => {
     if (useMockData) {
       return withLatency({
         dealId: payload.dealId,
@@ -2353,74 +2351,47 @@ export const travelWatchApi = {
         bookingStatus: "ticketed",
         provider: "ANA via Duffel",
         amount: dealData.price,
-        confirmationNote: "Mock approval completed. The booking is now ticketed in the existing scaffold.",
+        confirmationNote: "Simulated booking completed. No TRAMP-Stamp was awarded.",
+        trampStampsAwarded: 0,
+        trampStampBalance: 0,
       });
     }
 
-    const body = {
-      totp_code: payload.totpCode,
-      master_key_passphrase: payload.masterKeyPassphrase,
-    };
-    const candidatePaths = [
-      `/deals/${payload.dealId}/approve`,
-      `/deals/${payload.dealId}/book`,
-      payload.watchId ? `/watches/${payload.watchId}/deals/${payload.dealId}/approve` : "",
-    ].filter(Boolean);
-    const response = await tryCandidatePost<ApprovalResponseRaw | BookingRaw>(candidatePaths, body);
-
-    if (!response) {
-      throw new Error("The live approval endpoint is not available on this backend yet.");
+    const idempotencyKey = crypto.randomUUID();
+    const approval = await travelWatchApi.createApprovalToken(payload.dealId);
+    if (!approval.token) {
+      throw new Error("Unable to create a secure approval token for this booking.");
     }
 
-    if ("provider" in response || "amount_charged" in response) {
-      const booking = response as BookingRaw;
-      return {
-        dealId: payload.dealId,
-        bookingId: coerceString(booking.id) || undefined,
-        bookingStatus: coerceString(booking.status) || undefined,
-        provider: coerceString(booking.provider) || undefined,
-        amount: formatMoneyValue(booking.amount_charged, booking.currency || "JPY") || undefined,
-        confirmationNote: "Approval completed and the provider booking record was created.",
-        cancellationStatus: coerceString(booking.cancellation?.status) || undefined,
-        refundStatus: booking.cancellation?.refund_received
+    const booking = await apiClient.post<BookingRaw>("/bookings/approve", {
+      deal_id: payload.dealId,
+      approval_token: approval.token,
+      totp_code: payload.totpCode,
+      master_key_passphrase: payload.masterKeyPassphrase || undefined,
+      payment_method_id: payload.paymentMethodId,
+      idempotency_key: idempotencyKey,
+    });
+    const currency = booking?.currency || booking?.cancellation?.currency || "JPY";
+    return {
+      dealId: coerceString(booking.deal_id) || payload.dealId,
+      bookingId: coerceString(booking.id) || undefined,
+      bookingStatus: coerceString(booking.status) || undefined,
+      provider: coerceString(booking.provider) || undefined,
+      amount: formatMoneyValue(booking.amount_charged, currency) || undefined,
+      confirmationNote: "Booking confirmed. Review bookings for ticketing, cancellation, and refund updates.",
+      cancellationStatus: coerceString(booking.cancellation?.status) || undefined,
+      refundStatus:
+        booking.cancellation?.refund_received
           ? "Refund received"
           : booking.cancellation?.refund_expected
             ? "Refund pending"
             : undefined,
-        refundAmount:
-          formatMoneyValue(booking.cancellation?.refund_received, booking.cancellation?.currency || "JPY") ||
-          formatMoneyValue(booking.cancellation?.refund_expected, booking.cancellation?.currency || "JPY") ||
-          undefined,
-      };
-    }
-
-    const approval = response as ApprovalResponseRaw;
-    const booking = approval.booking;
-    const currency = booking?.currency || booking?.cancellation?.currency || "JPY";
-    return {
-      dealId: coerceString(approval.deal_id) || payload.dealId,
-      bookingId: coerceString(approval.booking_id) || coerceString(booking?.id) || undefined,
-      bookingStatus: coerceString(approval.status) || coerceString(booking?.status) || undefined,
-      provider: coerceString(booking?.provider) || undefined,
-      amount: formatMoneyValue(booking?.amount_charged, currency) || undefined,
-      confirmationNote:
-        coerceString(approval.detail) ||
-        coerceString(approval.message) ||
-        "Approval completed. Review bookings for ticketing, cancellation, and refund updates.",
-      cancellationStatus:
-        coerceString(approval.cancellation?.status) || coerceString(booking?.cancellation?.status) || undefined,
-      refundStatus:
-        approval.cancellation?.refund_received || booking?.cancellation?.refund_received
-          ? "Refund received"
-          : approval.cancellation?.refund_expected || booking?.cancellation?.refund_expected
-            ? "Refund pending"
-            : undefined,
       refundAmount:
-        formatMoneyValue(approval.cancellation?.refund_received, approval.cancellation?.currency || currency) ||
-        formatMoneyValue(approval.cancellation?.refund_expected, approval.cancellation?.currency || currency) ||
-        formatMoneyValue(booking?.cancellation?.refund_received, booking?.cancellation?.currency || currency) ||
-        formatMoneyValue(booking?.cancellation?.refund_expected, booking?.cancellation?.currency || currency) ||
+        formatMoneyValue(booking.cancellation?.refund_received, booking.cancellation?.currency || currency) ||
+        formatMoneyValue(booking.cancellation?.refund_expected, booking.cancellation?.currency || currency) ||
         undefined,
+      trampStampsAwarded: booking.tramp_stamps_awarded ?? 0,
+      trampStampBalance: booking.tramp_stamp_balance ?? 0,
     };
   },
 

@@ -191,6 +191,15 @@ export interface DealApprovalResult {
   cancellationStatus?: string;
   refundStatus?: string;
   refundAmount?: string;
+  trampStampsAwarded: number;
+  trampStampBalance: number;
+}
+
+export interface BookDealRequest {
+  dealId: string;
+  paymentMethodId: string;
+  totpCode: string;
+  masterKeyPassphrase: string;
 }
 
 export interface DealIntentResult {

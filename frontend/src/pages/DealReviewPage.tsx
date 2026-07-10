@@ -4,7 +4,7 @@ import { useLocation, useParams, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
-import type { DealData } from "@/api/types";
+import type { BookDealRequest, DealData } from "@/api/types";
 import {
   Badge,
   Button,
@@ -63,12 +63,18 @@ export function DealReviewPage() {
     [location.state],
   );
   const [showApprovalForm, setShowApprovalForm] = useState(false);
+  const [paymentMethodId, setPaymentMethodId] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const [masterKeyPassphrase, setMasterKeyPassphrase] = useState("");
   const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
 
   const { data, error } = useQuery({
     queryKey: queryKeys.deal(dealId, watchId),
     queryFn: () => travelWatchApi.getDealReview(dealId, { watchId, seed: reviewSeed }),
+  });
+  const { data: profileWorkspace, error: profileError } = useQuery({
+    queryKey: queryKeys.profile,
+    queryFn: travelWatchApi.getProfileWorkspace,
   });
   const approvalTokenVerification = useQuery({
     queryKey: ["deal-approval-token", dealId, approvalTokenFromLink],
@@ -76,24 +82,26 @@ export function DealReviewPage() {
     enabled: approvalTokenFromLink.length > 0,
   });
 
-  const approvalMutation = useMutation({
-    mutationFn: async (payload: { totpCode: string }) => {
-      const token =
-        approvalTokenFromLink ||
-        (await travelWatchApi.createApprovalToken(dealId)).token;
-      return travelWatchApi.confirmDealIntent({
-        dealId,
-        token,
-        totpCode: payload.totpCode,
-      });
-    },
+  const bookingMutation = useMutation({
+    mutationFn: (payload: BookDealRequest) => travelWatchApi.bookDeal(payload),
+    retry: false,
     onSuccess: async (result) => {
-      setApprovalNotice(result.detail);
+      const bookingDetails = [
+        result.confirmationNote,
+        result.provider ? `Provider: ${result.provider}.` : "",
+        result.amount ? `Amount: ${result.amount}.` : "",
+        result.bookingStatus ? `Status: ${result.bookingStatus.replace(/_/g, " ")}.` : "",
+      ].filter(Boolean);
+      setApprovalNotice(bookingDetails.join(" "));
       setShowApprovalForm(false);
+      setPaymentMethodId("");
       setTotpCode("");
+      setMasterKeyPassphrase("");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.deal(dealId, watchId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.profile }),
       ]);
     },
   });
@@ -121,8 +129,32 @@ export function DealReviewPage() {
   const dealIntentLocked = ["confirmed", "rejected", "booked", "expired", "failed"].includes(
     deal.dealStatus ?? "",
   );
+  const bookingLocked = ["rejected", "booked", "expired", "failed"].includes(deal.dealStatus ?? "");
   const bookNowAction = deal.ctaActions.find((action) => action.key === "book_now");
   const ignoreAction = deal.ctaActions.find((action) => action.key === "ignore");
+  const hasReadinessBlockers = Boolean(deal.readiness?.blockers?.length);
+  const linkedApprovalUnavailable =
+    approvalTokenFromLink.length > 0 &&
+    (approvalTokenVerification.isFetching ||
+      approvalTokenVerification.isError ||
+      approvalTokenVerification.data?.valid !== true);
+  const bookingCanSubmit =
+    data.approvalAvailable &&
+    bookNowAction?.enabled !== false &&
+    !bookingLocked &&
+    !hasReadinessBlockers &&
+    paymentMethodId.length > 0 &&
+    /^\d{6}$/.test(totpCode) &&
+    !bookingMutation.isPending &&
+    !linkedApprovalUnavailable;
+
+  const closeSecureBookingForm = () => {
+    setShowApprovalForm(false);
+    setPaymentMethodId("");
+    setTotpCode("");
+    setMasterKeyPassphrase("");
+    bookingMutation.reset();
+  };
 
   return (
     <div className="stack">
@@ -130,7 +162,7 @@ export function DealReviewPage() {
         <SectionHeading
           eyebrow="Screen 3"
           title={`${deal.route} · ${deal.cabin}`}
-            description="Review price context, loyalty mapping, coverage, and warnings before recording approval or rejection intent."
+          description="Review price context, loyalty mapping, coverage, and warnings before secure booking or rejection."
           action={
             <Badge tone={deal.bookingStatus ? "value" : deal.expiresAt ? "alert" : "muted"}>
               {deal.bookingStatus || (deal.expiresAt ? `Expires ${deal.expiresAt}` : deal.dealStatus || "Review")}
@@ -156,9 +188,9 @@ export function DealReviewPage() {
             </div>
           ) : null
         ) : null}
-        {approvalMutation.isError ? (
+        {bookingMutation.isError ? (
           <div className="notice notice-alert">
-            {getErrorMessage(approvalMutation.error, "Unable to record approval intent for this deal.")}
+            {getErrorMessage(bookingMutation.error, "Unable to complete this booking.")}
           </div>
         ) : null}
         {rejectMutation.isError ? (
@@ -300,16 +332,56 @@ export function DealReviewPage() {
         {showApprovalForm ? (
           <Surface className="inset-card approval-card">
             <SectionHeading
-              eyebrow="Secure approval"
-              title="Confirm approval intent"
-              description="V3 records a secure TOTP-backed approval decision here. The actual booking executor remains a later deterministic step."
+              eyebrow="Secure booking"
+              title="Confirm and book"
+              description="Choose a saved payment method and verify this booking with your six-digit TOTP code."
             />
 
             <div className="form-grid">
+              {profileWorkspace?.paymentMethods.length ? (
+                <div className="field-stack">
+                  <label htmlFor="booking-payment-method">Saved payment method</label>
+                  <select
+                    id="booking-payment-method"
+                    className="text-input"
+                    value={paymentMethodId}
+                    onChange={(event) => setPaymentMethodId(event.target.value)}
+                  >
+                    <option value="">Select a payment method</option>
+                    {profileWorkspace.paymentMethods.map((paymentMethod) => {
+                      const expiry =
+                        paymentMethod.expMonth && paymentMethod.expYear
+                          ? `, expires ${paymentMethod.expMonth}/${paymentMethod.expYear}`
+                          : "";
+                      return (
+                        <option key={paymentMethod.id} value={paymentMethod.id}>
+                          {paymentMethod.label} | {paymentMethod.brand || "Card"} ending{" "}
+                          {paymentMethod.last4 || "----"}
+                          {expiry}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <p className="helper-copy">Only masked card details are shown. Card secrets stay protected.</p>
+                </div>
+              ) : profileWorkspace ? (
+                <div className="notice notice-alert field-span-full">
+                  <p className="item-title">No saved payment methods</p>
+                  <p className="item-copy">
+                    Add a payment method in your profile before booking this deal.
+                  </p>
+                  <Button variant="secondary" to="/profile">
+                    Manage payment methods
+                  </Button>
+                </div>
+              ) : (
+                <div className="muted-card field-span-full">Loading saved payment methods...</div>
+              )}
+
               <div className="field-stack">
-                <label htmlFor="approval-totp">Six-digit TOTP code</label>
+                <label htmlFor="booking-totp">Six-digit TOTP code</label>
                 <input
-                  id="approval-totp"
+                  id="booking-totp"
                   className="text-input"
                   inputMode="numeric"
                   autoComplete="one-time-code"
@@ -318,29 +390,53 @@ export function DealReviewPage() {
                   placeholder="123456"
                 />
               </div>
+
+              <div className="field-stack">
+                <label htmlFor="booking-master-key">Master-key passphrase (optional)</label>
+                <input
+                  id="booking-master-key"
+                  className="text-input"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={masterKeyPassphrase}
+                  onChange={(event) => setMasterKeyPassphrase(event.target.value)}
+                  placeholder="Leave blank when not required"
+                />
+                <p className="helper-copy">
+                  Your backend security mode determines whether this passphrase is required.
+                </p>
+              </div>
             </div>
+
+            {profileError ? (
+              <div className="notice notice-alert">
+                {getErrorMessage(profileError, "Unable to load saved payment methods.")}
+              </div>
+            ) : null}
 
             {!data.approvalAvailable ? (
               <div className="notice notice-alert">
-                The live approval-intent endpoint is intentionally unavailable on this backend right now.
+                Booking approval is unavailable for this deal right now.
               </div>
             ) : null}
 
             <div className="button-row">
               <Button
                 type="button"
-                onClick={() => approvalMutation.mutate({ totpCode })}
-                disabled={
-                  approvalMutation.isPending ||
-                  approvalTokenVerification.isFetching ||
-                  (approvalTokenFromLink.length > 0 && approvalTokenVerification.data?.valid === false) ||
-                  !data.approvalAvailable ||
-                  totpCode.length !== 6
+                onClick={() =>
+                  bookingMutation.mutate({
+                    dealId,
+                    paymentMethodId,
+                    totpCode,
+                    masterKeyPassphrase,
+                  })
                 }
+                disabled={!bookingCanSubmit}
               >
-                {approvalMutation.isPending ? "Recording..." : "Confirm approval"}
+                {bookingMutation.isPending ? "Booking..." : "Book now"}
               </Button>
-              <Button type="button" variant="secondary" onClick={() => setShowApprovalForm(false)}>
+              <Button type="button" variant="secondary" onClick={closeSecureBookingForm}>
                 Cancel
               </Button>
             </div>
@@ -380,14 +476,22 @@ export function DealReviewPage() {
       <div className="button-row">
         <Button
           type="button"
-          onClick={() => setShowApprovalForm((current) => !current)}
+          onClick={() => {
+            if (showApprovalForm) {
+              closeSecureBookingForm();
+              return;
+            }
+            bookingMutation.reset();
+            setApprovalNotice(null);
+            setShowApprovalForm(true);
+          }}
           disabled={
-            dealIntentLocked ||
+            bookingLocked ||
             bookNowAction?.enabled === false ||
-            Boolean(deal.readiness?.blockers?.length)
+            hasReadinessBlockers
           }
         >
-          {showApprovalForm ? "Hide approval" : bookNowAction?.label || "Book now"}
+          {showApprovalForm ? "Hide booking form" : bookNowAction?.label || "Book now"}
         </Button>
         <Button
           type="button"
