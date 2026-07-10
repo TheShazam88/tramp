@@ -16,6 +16,15 @@ class AdminIntegrationUpdateRequest(BaseModel):
     credential_profile_id: str | None = None
 
 
+class AdminIntegrationAcquisitionGuideResponse(BaseModel):
+    signup_url: str
+    application_url: str | None = None
+    account_requirements: list[str]
+    steps: list[str]
+    environment_notes: list[str]
+    enables: list[str]
+
+
 class AdminIntegrationResponse(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
@@ -41,6 +50,7 @@ class AdminIntegrationResponse(BaseModel):
     credential_fields: list[dict[str, Any]]
     feature_flag_definitions: list[dict[str, Any]]
     validation_help: str | None
+    guide: AdminIntegrationAcquisitionGuideResponse | None = None
 
 
 class AdminIntegrationCategoryResponse(BaseModel):

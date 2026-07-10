@@ -69,6 +69,52 @@ describe("travelWatchApi booking execution", () => {
     expect(workspace.trampStampBalance).toBe(7);
   });
 
+  it("maps provider acquisition guides from the admin response", async () => {
+    vi.spyOn(apiClient, "get").mockResolvedValue({
+      categories: [],
+      providers: [
+        {
+          key: "flights_amadeus",
+          label: "Flights · Amadeus",
+          category: "flights",
+          enabled: true,
+          environment: "test",
+          credentials_masked: {},
+          credential_fields: [],
+          feature_flags: {},
+          feature_flag_definitions: [],
+          guide: {
+            signup_url: "https://developers.amadeus.com/quick-start",
+            application_url: "https://developers.amadeus.com/production",
+            account_requirements: ["Developer account"],
+            steps: ["Create an app", "Copy the test credentials"],
+            environment_notes: ["Use test credentials first"],
+            enables: ["Amadeus credential configuration"],
+          },
+        },
+      ],
+      credential_profiles: [],
+      feature_flags: [],
+      health_notes: [],
+      runtime_settings: {
+        mock_data_enabled: true,
+        live_inventory_available: false,
+        current_inventory_mode: "mock",
+      },
+    } as never);
+
+    const integrations = await travelWatchApi.getIntegrations();
+
+    expect(integrations.providers[0].guide).toEqual({
+      signupUrl: "https://developers.amadeus.com/quick-start",
+      applicationUrl: "https://developers.amadeus.com/production",
+      accountRequirements: ["Developer account"],
+      steps: ["Create an app", "Copy the test credentials"],
+      environmentNotes: ["Use test credentials first"],
+      enables: ["Amadeus credential configuration"],
+    });
+  });
+
   it("posts the caller-owned approval token and idempotency key unchanged", async () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({
       id: "booking-1",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import FrozenInstanceError, asdict
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 import app.integrations.service as integrations_service
+from app.api.schemas.integrations import AdminIntegrationResponse
 from app.config import KeyUnlockMode, MasterKeySource, get_settings
 from app.db.models import (
     Booking,
@@ -28,6 +30,7 @@ from app.db.models import (
     TripWatch,
     User,
 )
+from app.integrations.catalog import get_catalog_entry, list_catalog_entries
 from app.integrations.connectors import (
     FLIGHT_SOURCE_BY_INTEGRATION_KEY,
     LocalBookingConnector,
@@ -138,6 +141,103 @@ class _FakeRuntimeSession:
 class _NoopSession:
     def scalar(self, _statement):
         return None
+
+
+def test_every_catalog_entry_has_a_complete_frozen_acquisition_guide() -> None:
+    entries = list_catalog_entries()
+
+    assert {entry.key for entry in entries} == {
+        "flights_amadeus",
+        "flights_duffel",
+        "flights_kiwi",
+        "hotels",
+        "booking",
+        "notifications",
+        "calendar",
+    }
+
+    for entry in entries:
+        guide = entry.guide
+        assert guide is not None, entry.key
+        assert guide.signup_url.startswith("https://"), entry.key
+        assert guide.account_requirements, entry.key
+        assert guide.steps, entry.key
+        assert guide.environment_notes, entry.key
+        assert guide.enables, entry.key
+        for values in (
+            guide.account_requirements,
+            guide.steps,
+            guide.environment_notes,
+            guide.enables,
+        ):
+            assert isinstance(values, tuple), entry.key
+            assert all(value.strip() for value in values), entry.key
+
+    with pytest.raises(FrozenInstanceError):
+        get_catalog_entry("flights_amadeus").guide.signup_url = "https://example.com"
+
+
+def test_catalog_acquisition_guides_use_official_provider_links() -> None:
+    expected_urls = {
+        "flights_amadeus": (
+            "https://developers.amadeus.com/self-service/apis-docs/guides/"
+            "developer-guides/quick-start/"
+        ),
+        "flights_duffel": "https://duffel.com/docs/api/overview/making-requests",
+        "flights_kiwi": "https://tequila.kiwi.com/",
+        "hotels": "https://developer.hotelbeds.com/documentation/getting-started/",
+        "notifications": "https://core.telegram.org/bots/tutorial",
+        "calendar": "https://developers.google.com/workspace/calendar/api/quickstart/python",
+    }
+
+    for key, signup_url in expected_urls.items():
+        assert get_catalog_entry(key).guide.signup_url == signup_url
+
+    hotels_guide = get_catalog_entry("hotels").guide
+    assert hotels_guide.application_url == "https://developers.booking.com/demand"
+    assert "one credential" in " ".join(hotels_guide.steps).lower()
+
+    booking_guide = get_catalog_entry("booking").guide
+    assert booking_guide.application_url is not None
+    assert "provider" in " ".join(booking_guide.steps).lower()
+
+    notifications_guide = get_catalog_entry("notifications").guide
+    notification_copy = " ".join(
+        (
+            *notifications_guide.account_requirements,
+            *notifications_guide.steps,
+            *notifications_guide.environment_notes,
+        )
+    ).lower()
+    assert "mailpit" in notification_copy
+    assert "smtp provider" in notification_copy
+
+    kiwi_copy = " ".join(get_catalog_entry("flights_kiwi").guide.steps).lower()
+    assert "approval" in kiwi_copy
+
+
+def test_every_resolved_acquisition_guide_serializes_for_the_admin_api() -> None:
+    for entry in list_catalog_entries():
+        resolved = resolve_integration_state(
+            db=_NoopSession(),
+            key=entry.key,
+            record=None,
+        )
+
+        payload = AdminIntegrationResponse.model_validate(asdict(resolved)).model_dump(
+            mode="json"
+        )
+
+        assert payload["guide"]["signup_url"] == entry.guide.signup_url
+        assert payload["guide"]["application_url"] == entry.guide.application_url
+        assert payload["guide"]["account_requirements"] == list(
+            entry.guide.account_requirements
+        )
+        assert payload["guide"]["steps"] == list(entry.guide.steps)
+        assert payload["guide"]["environment_notes"] == list(
+            entry.guide.environment_notes
+        )
+        assert payload["guide"]["enables"] == list(entry.guide.enables)
 
 
 def test_resolve_integration_state_prefers_stored_credentials(

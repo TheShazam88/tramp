@@ -406,6 +406,15 @@ export interface IntegrationFlag {
   enabled: boolean;
 }
 
+export interface IntegrationAcquisitionGuide {
+  signupUrl: string;
+  applicationUrl?: string;
+  accountRequirements: string[];
+  steps: string[];
+  environmentNotes: string[];
+  enables: string[];
+}
+
 export interface IntegrationProvider {
   key: string;
   name: string;
@@ -423,6 +432,7 @@ export interface IntegrationProvider {
   validationHelp?: string;
   credentialProfileId?: string;
   credentialProfileLabel?: string;
+  guide?: IntegrationAcquisitionGuide;
   credentialState: {
     configured: boolean;
     label: string;

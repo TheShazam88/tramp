@@ -502,6 +502,15 @@ interface ApprovalResponseRaw {
   action_taken?: Record<string, unknown> | null;
 }
 
+interface AdminIntegrationAcquisitionGuideRaw {
+  signup_url?: string | null;
+  application_url?: string | null;
+  account_requirements?: string[] | null;
+  steps?: string[] | null;
+  environment_notes?: string[] | null;
+  enables?: string[] | null;
+}
+
 interface AdminIntegrationRaw {
   key?: string | null;
   name?: string | null;
@@ -525,6 +534,7 @@ interface AdminIntegrationRaw {
   updated_at?: string | null;
   updated_by?: string | null;
   validation_help?: string | null;
+  guide?: AdminIntegrationAcquisitionGuideRaw | null;
   credential_profile_id?: string | null;
   credential_profile_label?: string | null;
   credentials_masked?: Record<string, unknown> | null;
@@ -940,6 +950,24 @@ function mapIntegrationFlags(
   }));
 }
 
+function mapIntegrationAcquisitionGuide(
+  raw: AdminIntegrationAcquisitionGuideRaw | null | undefined,
+): IntegrationData["providers"][number]["guide"] {
+  const signupUrl = coerceString(raw?.signup_url);
+  if (!raw || !signupUrl) {
+    return undefined;
+  }
+
+  return {
+    signupUrl,
+    applicationUrl: coerceString(raw.application_url) || undefined,
+    accountRequirements: asStringList(raw.account_requirements),
+    steps: asStringList(raw.steps),
+    environmentNotes: asStringList(raw.environment_notes),
+    enables: asStringList(raw.enables),
+  };
+}
+
 function mapIntegrationProvider(raw: AdminIntegrationRaw, index: number): IntegrationData["providers"][number] {
   const name =
     coerceString(raw.name) || coerceString(raw.label) || coerceString(raw.provider) || coerceString(raw.key) || `Provider ${index + 1}`;
@@ -984,6 +1012,7 @@ function mapIntegrationProvider(raw: AdminIntegrationRaw, index: number): Integr
     validationHelp: coerceString(raw.validation_help) || undefined,
     credentialProfileId: coerceString(raw.credential_profile_id) || undefined,
     credentialProfileLabel: coerceString(raw.credential_profile_label) || undefined,
+    guide: mapIntegrationAcquisitionGuide(raw.guide),
     credentialState: {
       configured,
       label:

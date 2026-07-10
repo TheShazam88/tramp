@@ -80,6 +80,24 @@ Supported v2 admin-managed surfaces include:
 - notifications
 - calendar
 
+### Provider access and credential acquisition
+
+- Flights: follow the official [Amadeus quick start](https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/quick-start/) or [Duffel flights guide](https://duffel.com/docs/guides/getting-started-with-flights). [Kiwi Tequila](https://tequila.kiwi.com/) access is partner and approval driven, so a key may not be available immediately.
+- Hotels and booking: choose a provider first. [Hotelbeds](https://developer.hotelbeds.com/documentation/getting-started/) and the [Booking.com Demand API](https://developers.booking.com/demand) have separate account, credential, and environment requirements. One provider key does not authorize another provider.
+- Notifications: `log_only` and local Mailpit need no universal API key. Use credentials from your own SMTP provider when its server requires authentication. Create Telegram bots only through the official [BotFather tutorial](https://core.telegram.org/bots/tutorial).
+- Calendar: use the official [Google Calendar quickstart](https://developers.google.com/workspace/calendar/api/quickstart/python) to set up a Google Cloud project, OAuth client, and user authorization.
+
+These settings prepare encrypted provider configuration and local diagnostics. The current local-safe connectors remain simulated and do not become live search, booking, notification, or calendar implementations just because credentials are saved.
+
+Admin UI sequence:
+
+1. Open the provider's integration category.
+2. Expand `How to get ... credentials` above the credential fields.
+3. Follow the official setup or application link and start with test access when available.
+4. Save credentials in a shared profile or directly on the connector.
+5. Link the profile where supported, then run `Test connection`.
+6. Select live only after the provider grants the required production capability and the connector has a real live implementation.
+
 ## Notification and calendar behavior
 
 - Notification mode defaults to `log_only`

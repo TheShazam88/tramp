@@ -498,6 +498,7 @@ def resolve_integration_state(
         credential_fields=list(entry.credential_fields),
         feature_flag_definitions=list(entry.feature_flag_definitions),
         validation_help=entry.validation_help,
+        guide=entry.guide,
     )
 
 

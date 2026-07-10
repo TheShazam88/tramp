@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.integrations.types import (
+    IntegrationAcquisitionGuide,
     IntegrationCatalogEntry,
     IntegrationCredentialField,
     IntegrationFeatureFlagDefinition,
@@ -44,7 +45,44 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 description="Allow the live-shaped connector path while remaining localhost safe.",
             ),
         ),
-        validation_help="Get these from developers.amadeus.com: create a Self-Service app to receive an API Key (client_id) and API Secret (client_secret).",
+        validation_help=(
+            "Get these from developers.amadeus.com: create a Self-Service app to receive "
+            "an API Key (client_id) and API Secret (client_secret)."
+        ),
+        guide=IntegrationAcquisitionGuide(
+            signup_url=(
+                "https://developers.amadeus.com/self-service/apis-docs/guides/"
+                "developer-guides/quick-start/"
+            ),
+            application_url=(
+                "https://developers.amadeus.com/self-service/apis-docs/guides/"
+                "developer-guides/API-Keys/moving-to-production/"
+            ),
+            account_requirements=(
+                "An Amadeus for Developers account with access to the Self-Service workspace.",
+                "A separate application in the workspace for the credentials you plan to use.",
+            ),
+            steps=(
+                "Open the official quick start and create or sign in to your developer account.",
+                "Create a Self-Service application in the Amadeus workspace.",
+                "Copy the test API key into Client ID and the test API secret into Client secret.",
+                "Save the credential profile, link it to this connector, and run Test connection.",
+                "Use the official production guide before requesting production access.",
+            ),
+            environment_notes=(
+                "New Self-Service applications start with test credentials and test endpoints.",
+                (
+                    "Production access is a separate process with eligibility and "
+                    "commercial requirements."
+                ),
+                "TRAMP currently keeps this connector simulated, even when live mode is selected.",
+            ),
+            enables=(
+                "Reusable Amadeus credentials for compatible TRAMP connectors.",
+                "Saved credential validation and local connection diagnostics.",
+                "Configuration needed for future live Amadeus flight search wiring.",
+            ),
+        ),
     ),
     IntegrationCatalogEntry(
         key="flights_duffel",
@@ -77,12 +115,45 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 description="Allow the live-shaped connector path while remaining localhost safe.",
             ),
         ),
-        validation_help="Get this from duffel.com/docs: create a test or live access token in the Duffel dashboard under Developers -> Access tokens.",
+        validation_help=(
+            "Get this from duffel.com/docs: create a test or live access token in the "
+            "Duffel dashboard under Developers -> Access tokens."
+        ),
+        guide=IntegrationAcquisitionGuide(
+            signup_url="https://duffel.com/docs/api/overview/making-requests",
+            application_url="https://duffel.com/docs/guides/getting-started-with-flights",
+            account_requirements=(
+                "A Duffel account with access to the dashboard and developer tools.",
+                "Live selling access and any required business checks before using a live token.",
+            ),
+            steps=(
+                "Open the official authentication guide and sign in to the Duffel dashboard.",
+                "Create a test access token under Developers and Access tokens.",
+                "Paste the token into Access token, then save or create a reusable Duffel profile.",
+                "Link the profile to this connector and run Test connection.",
+                "Complete Duffel live access requirements before creating or using a live token.",
+            ),
+            environment_notes=(
+                (
+                    "Duffel test and live tokens are separate. Keep each token in the "
+                    "matching TRAMP environment."
+                ),
+                "Live access can require activation and compliance steps in your Duffel account.",
+                "TRAMP currently keeps this connector simulated, even when live mode is selected.",
+            ),
+            enables=(
+                "Reusable Duffel credentials for Flights and Booking configuration.",
+                "Saved token validation and local connection diagnostics.",
+                "Configuration needed for future live Duffel flight and order wiring.",
+            ),
+        ),
     ),
     IntegrationCatalogEntry(
         key="flights_kiwi",
         label="Flights · Kiwi",
-        description="Kiwi Tequila flight shopping connector used during multi-provider watch search.",
+        description=(
+            "Kiwi Tequila flight shopping connector used during multi-provider watch search."
+        ),
         category="flights",
         provider_key="kiwi",
         supports_shared_profile=True,
@@ -110,7 +181,42 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 description="Allow the live-shaped connector path while remaining localhost safe.",
             ),
         ),
-        validation_help="Start at tequila.kiwi.com. Kiwi partner access is more approval-driven, so production credentials may require affiliate/partner onboarding.",
+        validation_help=(
+            "Start at tequila.kiwi.com. Kiwi partner access is more approval-driven, so "
+            "production credentials may require affiliate/partner onboarding."
+        ),
+        guide=IntegrationAcquisitionGuide(
+            signup_url="https://tequila.kiwi.com/",
+            account_requirements=(
+                "A Kiwi partner or affiliate relationship that is eligible for Tequila access.",
+                "Approval from Kiwi for the requested API use case when required.",
+            ),
+            steps=(
+                "Open the official Kiwi Tequila portal and review the current partner access path.",
+                "Submit the requested partner or affiliate information for your use case.",
+                (
+                    "Wait for Kiwi approval and credential issuance. Access is not "
+                    "guaranteed or instant."
+                ),
+                "Paste the issued key into Tequila API key, save it, and run Test connection.",
+            ),
+            environment_notes=(
+                (
+                    "Kiwi controls access and may restrict new API credentials or "
+                    "available capabilities."
+                ),
+                (
+                    "Test and production terms depend on the access Kiwi grants to your "
+                    "partner account."
+                ),
+                "TRAMP currently keeps this connector simulated, even when live mode is selected.",
+            ),
+            enables=(
+                "Kiwi credential storage after partner approval.",
+                "Saved key validation and local connection diagnostics.",
+                "Configuration needed for future Kiwi flight search wiring.",
+            ),
+        ),
     ),
     IntegrationCatalogEntry(
         key="hotels",
@@ -132,6 +238,44 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 sensitive=False,
             ),
         ),
+        guide=IntegrationAcquisitionGuide(
+            signup_url="https://developer.hotelbeds.com/documentation/getting-started/",
+            application_url="https://developers.booking.com/demand",
+            account_requirements=(
+                "An account approved by the hotel inventory provider you select.",
+                (
+                    "Provider-specific commercial, billing, or partner details when that "
+                    "provider asks for them."
+                ),
+            ),
+            steps=(
+                "Choose one hotel provider before entering credentials.",
+                "For Hotelbeds, follow the official getting started guide linked here.",
+                "For Booking.com, review the official Demand API portal linked here.",
+                "Complete the selected provider's access process and obtain its own credentials.",
+                (
+                    "Enter that provider label and key in TRAMP. One credential does not "
+                    "cover other providers."
+                ),
+                "Save the connector and run Test connection.",
+            ),
+            environment_notes=(
+                (
+                    "Sandbox, test, and production access are defined separately by each "
+                    "hotel provider."
+                ),
+                "Do not reuse a Hotelbeds key for Booking.com or any other provider.",
+                (
+                    "TRAMP currently uses local-safe hotel behavior and does not perform "
+                    "live hotel searches."
+                ),
+            ),
+            enables=(
+                "Provider-specific hotel credential configuration.",
+                "Masked storage and local diagnostics for the selected provider.",
+                "Configuration needed for future live hotel inventory wiring.",
+            ),
+        ),
     ),
     IntegrationCatalogEntry(
         key="booking",
@@ -145,7 +289,10 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 key="provider",
                 label="Provider",
                 placeholder="duffel",
-                help_text="Choose the provider family this booking connector should use when linked to a shared credential profile.",
+                help_text=(
+                    "Choose the provider family this booking connector should use when "
+                    "linked to a shared credential profile."
+                ),
                 sensitive=False,
             ),
             IntegrationCredentialField(
@@ -158,7 +305,10 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 key="api_secret",
                 label="API secret",
                 placeholder="Optional provider secret",
-                help_text="Required for providers that use key/secret authentication, such as Amadeus-style setups.",
+                help_text=(
+                    "Required for providers that use key/secret authentication, such as "
+                    "Amadeus-style setups."
+                ),
             ),
             IntegrationCredentialField(
                 key="account_id",
@@ -168,7 +318,60 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 sensitive=False,
             ),
         ),
-        validation_help="Booking connectors can link to a shared flight-provider profile. If not linked, store booking credentials here and keep sensitive values write-only.",
+        validation_help=(
+            "Booking connectors can link to a shared flight-provider profile. If not "
+            "linked, store booking credentials here and keep sensitive values write-only."
+        ),
+        guide=IntegrationAcquisitionGuide(
+            signup_url="https://duffel.com/docs/guides/getting-started-with-flights",
+            application_url=(
+                "https://developers.amadeus.com/self-service/apis-docs/guides/"
+                "developer-guides/quick-start/"
+            ),
+            account_requirements=(
+                "An account with the provider that will execute the booking.",
+                (
+                    "Booking, order, or ticketing permission from that provider, not only "
+                    "search access."
+                ),
+            ),
+            steps=(
+                "Choose the booking provider first. Credentials are provider-specific.",
+                "Use the linked official Duffel or Amadeus guide for those provider families.",
+                (
+                    "For Kiwi, start at https://tequila.kiwi.com/ and wait for any required "
+                    "partner approval."
+                ),
+                (
+                    "For Booking.com Demand API, start at "
+                    "https://developers.booking.com/demand and use a separate approved account."
+                ),
+                (
+                    "Confirm that the issued credentials include the booking capability "
+                    "your workflow needs."
+                ),
+                (
+                    "Create or select the matching shared profile, save the connector, "
+                    "and run Test connection."
+                ),
+            ),
+            environment_notes=(
+                "Search access does not automatically grant booking, order, or ticketing access.",
+                (
+                    "Keep test credentials separate from production credentials for the "
+                    "selected provider."
+                ),
+                (
+                    "TRAMP currently uses a local-safe booking connector and does not "
+                    "place live bookings."
+                ),
+            ),
+            enables=(
+                "Provider-specific booking credential configuration.",
+                "Shared credential reuse between compatible Flights and Booking connectors.",
+                "Configuration needed for future live booking and cancellation wiring.",
+            ),
+        ),
     ),
     IntegrationCatalogEntry(
         key="notifications",
@@ -237,7 +440,50 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 description="Send disruption notifications.",
             ),
         ),
-        validation_help="log_only needs no credentials, smtp_dev needs smtp_host and smtp_from_address, telegram_bot needs telegram_bot_token.",
+        validation_help=(
+            "log_only needs no credentials, smtp_dev needs smtp_host and smtp_from_address, "
+            "telegram_bot needs telegram_bot_token."
+        ),
+        guide=IntegrationAcquisitionGuide(
+            signup_url="https://core.telegram.org/bots/tutorial",
+            account_requirements=(
+                "No external account or API key for log_only or a local Mailpit setup.",
+                (
+                    "Credentials from your chosen SMTP provider only when that SMTP server "
+                    "requires authentication."
+                ),
+                "A Telegram account and a bot created through BotFather for telegram_bot mode.",
+            ),
+            steps=(
+                "Choose log_only for local diagnostics with no external credentials.",
+                "For local email testing, run Mailpit and use its local SMTP host and port.",
+                (
+                    "For hosted SMTP, enter credentials issued by your own SMTP provider. "
+                    "There is no universal SMTP API key."
+                ),
+                (
+                    "For Telegram, follow the official BotFather tutorial linked here and "
+                    "copy the bot token."
+                ),
+                "Select the matching delivery mode, save the settings, and run Test connection.",
+            ),
+            environment_notes=(
+                "log_only stays inside TRAMP and is the safest default.",
+                (
+                    "Mailpit is suitable for local capture. Hosted SMTP and Telegram "
+                    "contact external services."
+                ),
+                (
+                    "TRAMP local-safe connectors may record simulated delivery instead "
+                    "of sending externally."
+                ),
+            ),
+            enables=(
+                "Local notification diagnostics without credentials.",
+                "SMTP configuration using Mailpit or the user's SMTP provider.",
+                "Telegram bot configuration using an official BotFather token.",
+            ),
+        ),
     ),
     IntegrationCatalogEntry(
         key="calendar",
@@ -274,7 +520,47 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 description="Run calendar conflict advisories during validation.",
             ),
         ),
-        validation_help="log_only needs no credentials, google_calendar needs calendar_id and access_token.",
+        validation_help=(
+            "log_only needs no credentials, google_calendar needs calendar_id and "
+            "access_token."
+        ),
+        guide=IntegrationAcquisitionGuide(
+            signup_url="https://developers.google.com/workspace/calendar/api/quickstart/python",
+            account_requirements=(
+                "A Google account and a Google Cloud project.",
+                "The Google Calendar API enabled for that project.",
+                "An OAuth client and user consent for the calendar account you want to access.",
+            ),
+            steps=(
+                "Follow the official Google Calendar quickstart linked here.",
+                "Create or select a Google Cloud project and enable the Google Calendar API.",
+                "Configure the OAuth consent screen and create the required OAuth client.",
+                "Authorize the target Google account and obtain an access token for testing.",
+                (
+                    "Enter the calendar ID and access token, save the connector, and run "
+                    "Test connection."
+                ),
+            ),
+            environment_notes=(
+                (
+                    "Use log_only until Google OAuth is configured and approved for the "
+                    "intended users."
+                ),
+                (
+                    "OAuth access tokens can expire. A production integration normally "
+                    "needs a secure refresh flow."
+                ),
+                (
+                    "TRAMP currently uses local-safe calendar behavior and does not create "
+                    "live Google events."
+                ),
+            ),
+            enables=(
+                "Google Calendar credential and calendar ID configuration.",
+                "Saved OAuth token validation and local connection diagnostics.",
+                "Configuration needed for future live event creation and cancellation wiring.",
+            ),
+        ),
     ),
 )
 

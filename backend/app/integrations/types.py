@@ -14,6 +14,16 @@ from app.db.models import (
 )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IntegrationAcquisitionGuide:
+    signup_url: str
+    application_url: str | None = None
+    account_requirements: tuple[str, ...]
+    steps: tuple[str, ...]
+    environment_notes: tuple[str, ...]
+    enables: tuple[str, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class IntegrationCatalogEntry:
     key: str
@@ -28,6 +38,7 @@ class IntegrationCatalogEntry:
     credential_fields: tuple[IntegrationCredentialField, ...] = ()
     feature_flag_definitions: tuple[IntegrationFeatureFlagDefinition, ...] = ()
     validation_help: str | None = None
+    guide: IntegrationAcquisitionGuide | None = None
 
     @property
     def env_slug(self) -> str:
@@ -76,6 +87,7 @@ class ResolvedIntegrationConfig:
     credential_fields: list[IntegrationCredentialField] = field(default_factory=list)
     feature_flag_definitions: list[IntegrationFeatureFlagDefinition] = field(default_factory=list)
     validation_help: str | None = None
+    guide: IntegrationAcquisitionGuide | None = None
 
 
 @dataclass(slots=True)

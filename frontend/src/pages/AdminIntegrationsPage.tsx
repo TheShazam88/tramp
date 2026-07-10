@@ -9,6 +9,7 @@ import type {
   IntegrationCredentialProfile,
   IntegrationProvider,
 } from "@/api/types";
+import { CredentialGuide } from "@/components/admin/CredentialGuide";
 import { Badge, Button, EmptyState, InfoList, SectionHeading, Surface } from "@/components/ui/primitives";
 
 const toneByStatus = {
@@ -539,6 +540,10 @@ export function AdminIntegrationsPage() {
                       }
                     />
                   </label>
+                  <CredentialGuide
+                    providerName={template?.name ?? titleize(profile.providerKey)}
+                    guide={template?.guide}
+                  />
                   {template?.credentialFields.map((field) => (
                     <label key={`${profile.id}-${field.key}`} className="field-stack">
                       <span>{field.label}</span>
@@ -638,6 +643,10 @@ export function AdminIntegrationsPage() {
                 }
               />
             </label>
+            <CredentialGuide
+              providerName={newProfileTemplate?.name ?? titleize(newProfileDraft.providerKey)}
+              guide={newProfileTemplate?.guide}
+            />
             {newProfileTemplate?.credentialFields.map((field) => (
               <label key={`new-${field.key}`} className="field-stack">
                 <span>{field.label}</span>
@@ -866,6 +875,7 @@ export function AdminIntegrationsPage() {
 
         <div className="form-shell">
           <p className="field-label">API access</p>
+          <CredentialGuide providerName={provider.name} guide={provider.guide} />
           <div className="form-grid">
             <label className="field-stack field-span-full">
               <span>{apiKeyField?.label ?? "API key"}</span>
@@ -1018,6 +1028,8 @@ export function AdminIntegrationsPage() {
             </label>
           </div>
         </div>
+
+        <CredentialGuide providerName={provider.name} guide={provider.guide} />
 
         {showSmtpFields ? (
           <div className="form-shell">
@@ -1264,6 +1276,7 @@ export function AdminIntegrationsPage() {
 
         <div className="form-shell">
           <p className="field-label">Credential overrides</p>
+          <CredentialGuide providerName={provider.name} guide={provider.guide} />
           <div className="form-grid">
             {provider.credentialFields.map((field) => (
               <label
@@ -1440,6 +1453,8 @@ export function AdminIntegrationsPage() {
             </label>
           </div>
         </div>
+
+        <CredentialGuide providerName={provider.name} guide={provider.guide} />
 
         {googleCalendarMode ? (
           <div className="form-shell">
@@ -1694,6 +1709,8 @@ export function AdminIntegrationsPage() {
           )}
         </div>
 
+        <CredentialGuide providerName={provider.name} guide={provider.guide} />
+
         {(!usingSharedProfile || showAdvancedOverrides) ? (
           <div className="form-shell">
             <p className="field-label">
@@ -1846,6 +1863,8 @@ export function AdminIntegrationsPage() {
             ) : null}
           </div>
         </details>
+
+        <CredentialGuide providerName={provider.name} guide={provider.guide} />
 
         <details className="multi-select">
           <summary className="multi-select-summary">Credential overrides</summary>
