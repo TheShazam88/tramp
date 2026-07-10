@@ -6,6 +6,10 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.admin_activity_service import (
+    execute_test_data_purge,
+    preview_test_data_purge,
+)
 from app.api.deps import require_admin
 from app.api.schemas.integrations import (
     AdminCredentialProfileCreateRequest,
@@ -15,21 +19,23 @@ from app.api.schemas.integrations import (
     AdminIntegrationConnectionTestResponse,
     AdminIntegrationResponse,
     AdminIntegrationsSummaryResponse,
+    AdminIntegrationUpdateRequest,
     AdminRuntimeSettingsResponse,
     AdminRuntimeSettingsUpdateRequest,
-    AdminIntegrationUpdateRequest,
+    AdminTestDataPurgeRequest,
+    AdminTestDataPurgeResponse,
 )
 from app.db.models import User
 from app.db.session import get_db_session
 from app.integrations.service import (
     create_credential_profile,
     delete_credential_profile,
-    get_mock_data_enabled,
     get_integration,
-    live_inventory_available,
+    get_mock_data_enabled,
     list_credential_profiles,
     list_integration_categories,
     list_integrations,
+    live_inventory_available,
     set_mock_data_enabled,
     test_connection,
     update_credential_profile,
@@ -49,7 +55,9 @@ def _to_response(resolved: object) -> AdminIntegrationResponse:
     return AdminIntegrationResponse.model_validate(asdict(resolved))
 
 
-def _summary_response(*, db: Session, category: str | None = None) -> AdminIntegrationsSummaryResponse:
+def _summary_response(
+    *, db: Session, category: str | None = None
+) -> AdminIntegrationsSummaryResponse:
     items = list_integrations(db=db, category=category)
     enabled_flags = []
     health_notes = []
@@ -57,12 +65,16 @@ def _summary_response(*, db: Session, category: str | None = None) -> AdminInteg
         if item.enabled and item.environment.value != "off":
             enabled_flags.extend(
                 [
-                    {"label": definition.label, "enabled": item.feature_flags.get(definition.key, False)}
+                    {
+                        "label": definition.label,
+                        "enabled": item.feature_flags.get(definition.key, False),
+                    }
                     for definition in item.feature_flag_definitions
                 ]
             )
         health_notes.append(
-            f"{item.label}: {item.environment.value} / {'enabled' if item.enabled else 'disabled'} / {item.credential_source}"
+            f"{item.label}: {item.environment.value} / "
+            f"{'enabled' if item.enabled else 'disabled'} / {item.credential_source}"
         )
     provider_keys = sorted(
         {
@@ -96,6 +108,43 @@ def _summary_response(*, db: Session, category: str | None = None) -> AdminInteg
     )
 
 
+@router.get("/test-data/purge-preview", response_model=AdminTestDataPurgeResponse)
+async def preview_test_data_purge_record(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+) -> AdminTestDataPurgeResponse:
+    try:
+        plan = preview_test_data_purge(db=db)
+    except ValueError as exc:
+        raise _map_service_error(exc) from exc
+    return AdminTestDataPurgeResponse(
+        dry_run=True,
+        deleted_counts=plan.deleted_counts,
+        reset_watch_count=len(plan.reset_watch_ids),
+    )
+
+
+@router.post("/test-data/purge", response_model=AdminTestDataPurgeResponse)
+async def purge_test_data_record(
+    payload: AdminTestDataPurgeRequest,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+) -> AdminTestDataPurgeResponse:
+    try:
+        result = execute_test_data_purge(
+            db=db,
+            actor=current_user,
+            confirmation=payload.confirmation,
+        )
+    except ValueError as exc:
+        raise _map_service_error(exc) from exc
+    return AdminTestDataPurgeResponse(
+        dry_run=False,
+        deleted_counts=result.deleted_counts,
+        reset_watch_count=len(result.reset_watch_ids),
+    )
+
+
 @router.get("/integrations", response_model=AdminIntegrationsSummaryResponse)
 async def list_integration_records(
     _: User = Depends(require_admin),
@@ -104,7 +153,9 @@ async def list_integration_records(
     return _summary_response(db=db)
 
 
-@router.get("/integrations/categories/{category_key}", response_model=AdminIntegrationsSummaryResponse)
+@router.get(
+    "/integrations/categories/{category_key}", response_model=AdminIntegrationsSummaryResponse
+)
 async def get_integration_category(
     category_key: str,
     _: User = Depends(require_admin),
@@ -187,7 +238,11 @@ async def update_runtime_settings(
     return AdminRuntimeSettingsResponse(
         mock_data_enabled=mock_data_enabled,
         live_inventory_available=live_available,
-        current_inventory_mode="live" if live_available else "mock" if mock_data_enabled else "empty",
+        current_inventory_mode="live"
+        if live_available
+        else "mock"
+        if mock_data_enabled
+        else "empty",
     )
 
 

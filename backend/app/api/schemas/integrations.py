@@ -103,6 +103,16 @@ class AdminRuntimeSettingsUpdateRequest(BaseModel):
     mock_data_enabled: bool
 
 
+class AdminTestDataPurgeRequest(BaseModel):
+    confirmation: str
+
+
+class AdminTestDataPurgeResponse(BaseModel):
+    dry_run: bool
+    deleted_counts: dict[str, int]
+    reset_watch_count: int
+
+
 class AdminIntegrationsSummaryResponse(BaseModel):
     categories: list[AdminIntegrationCategoryResponse]
     providers: list[AdminIntegrationResponse]
