@@ -52,6 +52,8 @@ class CancellationResponse(BaseModel):
     refund_received: Decimal | None
     currency: str | None
     status: CancellationStatus
+    provider: str | None = None
+    execution_simulated: bool | None = None
     requested_at: datetime
     resolved_at: datetime | None
     idempotent_replay: bool = False

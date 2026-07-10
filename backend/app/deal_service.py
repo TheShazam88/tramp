@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.activity_maintenance import acquire_activity_maintenance_lock
 from app.api.schemas.deals import (
     ApprovalTokenResponse,
     ApprovalTokenVerifyResponse,
@@ -143,6 +144,7 @@ def create_approval_token(
     deal_id: UUID,
     token_service: SignedTokenService,
 ) -> ApprovalTokenResponse:
+    acquire_activity_maintenance_lock(db)
     deal = get_owned_deal_record(db=db, user=user, deal_id=deal_id)
     _require_deal_proposed(deal)
     signed = issue_approval_token(deal=deal, user=user, token_service=token_service)
@@ -183,6 +185,7 @@ def confirm_deal_intent(
     totp_code: str,
     token_service: SignedTokenService,
 ) -> DealIntentResponse:
+    acquire_activity_maintenance_lock(db)
     deal = get_owned_deal_record(db=db, user=user, deal_id=deal_id)
     _require_deal_proposed(deal)
     if not user.totp_secret or not verify_totp_code(secret=user.totp_secret, code=totp_code):
@@ -219,10 +222,24 @@ def reject_deal(
     deal_id: UUID,
     reason: str,
 ) -> DealIntentResponse:
+    acquire_activity_maintenance_lock(db)
     deal = get_owned_deal_record(db=db, user=user, deal_id=deal_id)
     _require_deal_proposed(deal)
     watch = get_owned_watch_for_deal(db=db, user=user, deal=deal)
-    action_taken = _apply_rejection_feedback(db=db, watch=watch, deal=deal, reason=reason)
+    simulated_deal = source_is_simulated(deal.source)
+    if simulated_deal:
+        action_taken: dict[str, object] = {
+            "reason": reason.strip().lower(),
+            "durable_learning_applied": False,
+            "simulated_deal": True,
+        }
+    else:
+        action_taken = _apply_rejection_feedback(
+            db=db,
+            watch=watch,
+            deal=deal,
+            reason=reason,
+        )
     feedback = DealFeedback(
         watch_id=watch.id,
         deal_id=deal.id,
@@ -253,7 +270,11 @@ def reject_deal(
     return DealIntentResponse(
         deal_id=str(deal.id),
         status=deal.status.value,
-        detail="Rejection recorded. TRAMP will use this feedback to improve future proposals.",
+        detail=(
+            "Test feedback recorded without changing durable learning."
+            if simulated_deal
+            else "Rejection recorded. TRAMP will use this feedback to improve future proposals."
+        ),
         action_taken=action_taken,
     )
 

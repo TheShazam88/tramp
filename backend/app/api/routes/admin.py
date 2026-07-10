@@ -121,6 +121,9 @@ async def preview_test_data_purge_record(
         dry_run=True,
         deleted_counts=plan.deleted_counts,
         reset_watch_count=len(plan.reset_watch_ids),
+        plan_digest=plan.plan_digest,
+        warnings=list(plan.warnings),
+        unreverted_feedback_count=plan.unreverted_feedback_count,
     )
 
 
@@ -135,6 +138,7 @@ async def purge_test_data_record(
             db=db,
             actor=current_user,
             confirmation=payload.confirmation,
+            preview_digest=payload.plan_digest,
         )
     except ValueError as exc:
         raise _map_service_error(exc) from exc
@@ -142,6 +146,9 @@ async def purge_test_data_record(
         dry_run=False,
         deleted_counts=result.deleted_counts,
         reset_watch_count=len(result.reset_watch_ids),
+        plan_digest=result.plan_digest,
+        warnings=list(result.warnings),
+        unreverted_feedback_count=result.unreverted_feedback_count,
     )
 
 

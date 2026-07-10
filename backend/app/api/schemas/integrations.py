@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.models import IntegrationEnvironment
 
@@ -105,12 +105,16 @@ class AdminRuntimeSettingsUpdateRequest(BaseModel):
 
 class AdminTestDataPurgeRequest(BaseModel):
     confirmation: str
+    plan_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
 
 
 class AdminTestDataPurgeResponse(BaseModel):
     dry_run: bool
     deleted_counts: dict[str, int]
     reset_watch_count: int
+    plan_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    warnings: list[str]
+    unreverted_feedback_count: int
 
 
 class AdminIntegrationsSummaryResponse(BaseModel):

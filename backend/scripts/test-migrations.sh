@@ -115,6 +115,7 @@ docker run --rm --interactive \
   --name "$RUNNER_CONTAINER" \
   --label "$RESOURCE_LABEL" \
   --network "$NETWORK_NAME" \
+  --volume "$BACKEND_DIR/scripts:/app/scripts:ro" \
   --volume "$BACKEND_DIR/tests:/app/tests:ro" \
   --env MIGRATION_TEST_DATABASE_URL=postgresql+psycopg://travelwatch:travelwatch@postgres:5432/tramp_migration_test \
   --env MIGRATION_TEST_ALLOW_RESET=1 \
@@ -129,6 +130,7 @@ set -eu
 
 pip install "pytest>=8.2,<9.0" >/tmp/pytest-install.log
 pytest \
+  tests/test_admin_activity_postgres.py \
   tests/test_migration_chain.py \
   tests/test_tramp_stamps_postgres.py \
   -q \

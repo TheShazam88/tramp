@@ -236,6 +236,8 @@ class LocalBookingConnector:
             requested_at=requested_at,
         )
         return CancellationExecutionResult(
+            provider=self.connector_name,
+            simulated=True,
             status=result.status,
             refund_expected=result.refund_expected,
             refund_received=result.refund_received,

@@ -137,6 +137,8 @@ class BookingExecutionResult:
 
 @dataclass(slots=True)
 class CancellationExecutionResult:
+    provider: str
+    simulated: bool | None
     status: CancellationStatus
     refund_expected: Any
     refund_received: Any

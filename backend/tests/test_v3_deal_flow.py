@@ -161,6 +161,7 @@ def test_reject_deal_wrong_airline_adds_suppression_and_feedback(monkeypatch) ->
     user = _build_user()
     watch = _build_watch(user=user)
     deal = _build_deal(watch=watch)
+    deal.source = "live-duffel"
     db = FakeSession(scalar_results=[None, None])
 
     monkeypatch.setattr("app.deal_service.get_owned_deal_record", lambda **_kwargs: deal)
@@ -204,6 +205,7 @@ def test_reject_deal_too_pricey_increases_value_pressure(monkeypatch) -> None:
     user = _build_user()
     watch = _build_watch(user=user)
     deal = _build_deal(watch=watch)
+    deal.source = "live-duffel"
     db = FakeSession(scalar_results=[None])
 
     monkeypatch.setattr("app.deal_service.get_owned_deal_record", lambda **_kwargs: deal)

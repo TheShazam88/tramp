@@ -11,6 +11,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.activity_maintenance import acquire_activity_maintenance_lock
 from app.api.schemas.bookings import (
     BookingAttemptReconciliationResponse,
     BookingResponse,
@@ -159,6 +160,7 @@ def approve_and_book(
             code="attempt_in_progress",
         )
 
+    acquire_activity_maintenance_lock(db)
     deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
     claim = _persist_booking_claim(
         db=db,
@@ -172,6 +174,7 @@ def approve_and_book(
         return claim
     booking_attempt = claim
 
+    acquire_activity_maintenance_lock(db)
     deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
     existing_by_key = db.scalar(
         select(Booking).where(Booking.idempotency_key == idempotency_key)
@@ -222,6 +225,7 @@ def approve_and_book(
     booking_attempt.recovery_required = True
     db.add(booking_attempt)
     db.commit()
+    acquire_activity_maintenance_lock(db)
     deal = _lock_deal_for_booking(db=db, deal_id=claimed_deal_id)
 
     booked_at = datetime.now(UTC)
@@ -575,8 +579,10 @@ def cancel_booking(
     booking_id: UUID,
     reason: str | None,
 ) -> CancellationResponse:
+    acquire_activity_maintenance_lock(db)
     booking = _get_owned_booking_or_404(db=db, user=user, booking_id=booking_id)
-    if not get_mock_data_enabled(db=db) and _booking_is_simulated(db=db, booking=booking):
+    mock_data_enabled = get_mock_data_enabled(db=db)
+    if not mock_data_enabled and _booking_is_simulated(db=db, booking=booking):
         raise ConflictError("Live cancellation is unavailable while mock data is disabled.")
     deal = get_owned_deal_record(db=db, user=user, deal_id=booking.deal_id)
     watch = _get_owned_watch_for_deal(db=db, user=user, deal=deal)
@@ -592,12 +598,31 @@ def cancel_booking(
         reason=reason,
         requested_at=requested_at,
     )
+    execution_simulated = getattr(provider_result, "simulated", None)
+    provider = str(getattr(provider_result, "provider", "") or "").strip()
+    if execution_simulated is not True and execution_simulated is not False:
+        raise ConflictError("Cancellation provider omitted explicit execution provenance.")
+    if not provider:
+        raise ConflictError("Cancellation provider omitted its provider identifier.")
+    if not mock_data_enabled and (
+        execution_simulated
+        or provider_is_simulated(provider)
+        or payload_is_simulated(provider_result.provider_payload)
+    ):
+        raise ConflictError("Live cancellation is unavailable while mock data is disabled.")
+
     cancellation = Cancellation(
         booking_id=booking.id,
         reason=reason,
         refund_expected=provider_result.refund_expected,
         refund_received=provider_result.refund_received,
         currency=provider_result.currency,
+        provider=provider,
+        provider_correlation_id=provider_result.provider_correlation_id,
+        provider_payload_json=provider_result.provider_payload,
+        execution_simulated=execution_simulated,
+        prior_booking_status=booking.status,
+        prior_watch_status=watch.status,
         status=provider_result.status,
         requested_at=requested_at,
         resolved_at=provider_result.resolved_at,
@@ -608,19 +633,21 @@ def cancel_booking(
     if provider_result.status == CancellationStatus.REFUNDED:
         booking.status = BookingStatus.CANCELLED
         watch.status = TripWatchStatus.ACTIVE
-        try:
-            calendar_result = remove_booking_from_calendar(db=db, booking=booking, deal=deal)
-            calendar_transport = calendar_result.get("transport", "local-safe")
-            booking.calendar_detail = f"Calendar unwind complete via {calendar_transport}."
-        except Exception:  # noqa: BLE001
-            logger.exception("Calendar unwind failed for booking %s.", booking.id)
-            booking.calendar_detail = "Calendar unwind failed. Review server logs for details."
+        if not execution_simulated:
+            try:
+                calendar_result = remove_booking_from_calendar(db=db, booking=booking, deal=deal)
+                calendar_transport = calendar_result.get("transport", "local-safe")
+                booking.calendar_detail = f"Calendar unwind complete via {calendar_transport}."
+            except Exception:  # noqa: BLE001
+                logger.exception("Calendar unwind failed for booking %s.", booking.id)
+                booking.calendar_detail = "Calendar unwind failed. Review server logs for details."
         if provider_result.refund_received > 0:
             db.add(
                 SpendLedger(
                     user_id=user.id,
                     watch_id=watch.id,
                     booking_id=booking.id,
+                    cancellation_id=cancellation.id,
                     amount=provider_result.refund_received * Decimal("-1"),
                     currency=provider_result.currency,
                     booked_at=provider_result.resolved_at or requested_at,
@@ -643,6 +670,7 @@ def cancel_booking(
         ),
         booking=booking,
         deal=deal,
+        cancellation=cancellation,
     )
 
     db.add_all([booking, watch, cancellation])
@@ -757,6 +785,8 @@ def serialize_cancellation(
         refund_received=cancellation.refund_received,
         currency=cancellation.currency,
         status=cancellation.status,
+        provider=cancellation.provider,
+        execution_simulated=cancellation.execution_simulated,
         requested_at=cancellation.requested_at,
         resolved_at=cancellation.resolved_at,
         idempotent_replay=idempotent_replay,
@@ -806,6 +836,7 @@ def _persist_booking_claim(
     payment_method_id: UUID,
     idempotency_key: str,
 ) -> BookingAttempt | BookingResponse:
+    acquire_activity_maintenance_lock(db)
     claim_deal_id = deal.id
     existing_attempt = db.scalar(
         select(BookingAttempt).where(
@@ -1006,6 +1037,7 @@ def _commit_failed_booking_attempt(
     safe_to_retry: bool = False,
     recovery_required: bool = False,
 ) -> NoReturn:
+    acquire_activity_maintenance_lock(db)
     booking_attempt.status = BookingAttemptStatus.FAILED
     booking_attempt.recovery_required = recovery_required
     booking_attempt.error_text = error_text

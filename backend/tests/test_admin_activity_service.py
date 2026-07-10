@@ -328,6 +328,8 @@ def test_classification_fails_closed_for_ambiguous_learning_state() -> None:
 
     assert plan.suppressed_attribute_ids == frozenset()
     assert plan.rejected_fingerprint_ids == frozenset()
+    assert plan.unreverted_feedback_count == 1
+    assert any("could not be safely reverted" in warning for warning in plan.warnings)
 
 
 def test_classification_rejects_a_stamped_simulated_booking() -> None:
@@ -405,18 +407,28 @@ def test_admin_purge_schemas_expose_confirmation_and_counts() -> None:
     assert hasattr(integration_schemas, "AdminTestDataPurgeRequest")
     assert hasattr(integration_schemas, "AdminTestDataPurgeResponse")
 
-    request = integration_schemas.AdminTestDataPurgeRequest(confirmation="PURGE TEST DATA")
+    request = integration_schemas.AdminTestDataPurgeRequest(
+        confirmation="PURGE TEST DATA",
+        plan_digest="a" * 64,
+    )
     response = integration_schemas.AdminTestDataPurgeResponse(
         dry_run=True,
         deleted_counts={"deals": 2},
         reset_watch_count=1,
+        plan_digest="a" * 64,
+        warnings=[],
+        unreverted_feedback_count=0,
     )
 
     assert request.confirmation == "PURGE TEST DATA"
+    assert request.plan_digest == "a" * 64
     assert response.model_dump() == {
         "dry_run": True,
         "deleted_counts": {"deals": 2},
         "reset_watch_count": 1,
+        "plan_digest": "a" * 64,
+        "warnings": [],
+        "unreverted_feedback_count": 0,
     }
 
 

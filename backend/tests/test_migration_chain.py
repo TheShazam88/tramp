@@ -45,8 +45,10 @@ from app.db.models import (
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_ROOT = BACKEND_ROOT / "alembic" / "versions"
+POSTGRES_RUNNER = BACKEND_ROOT / "scripts" / "test-migrations.sh"
 INITIAL_REVISION = MIGRATION_ROOT / "20260629_0001_initial_schema.py"
 RECOVERY_REVISION = MIGRATION_ROOT / "20260710_0007_booking_recovery_required.py"
+PROVENANCE_REVISION = MIGRATION_ROOT / "20260710_0008_cancellation_provenance.py"
 
 PRE_V2_TABLES = {
     "audit_log",
@@ -79,7 +81,12 @@ POST_V1_TABLES = {
 }
 POST_V1_COLUMNS = {
     "calendar_detail",
+    "cancellation_id",
     "credential_profile_id",
+    "execution_simulated",
+    "prior_booking_status",
+    "prior_watch_status",
+    "provider_payload_json",
     "provider_correlation_id",
     "ticketing_state",
 }
@@ -107,6 +114,25 @@ def _migration_operations(path: Path, operation: str) -> list[str]:
             and isinstance(node.args[0].value, str)
         ):
             names.append(node.args[0].value)
+    return names
+
+
+def _migration_column_names(path: Path, operation: str) -> list[str]:
+    tree = ast.parse(path.read_text())
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Attribute)
+            or node.func.attr != operation
+            or len(node.args) < 2
+        ):
+            continue
+        column_arg = node.args[1]
+        if operation == "add_column" and isinstance(column_arg, ast.Call):
+            column_arg = column_arg.args[0]
+        if isinstance(column_arg, ast.Constant) and isinstance(column_arg.value, str):
+            names.append(column_arg.value)
     return names
 
 
@@ -145,8 +171,38 @@ def test_initial_revision_explicitly_owns_only_pre_v2_schema() -> None:
     assert POST_V1_COLUMNS.isdisjoint(source.split('"'))
 
 
+def test_required_postgres_runner_includes_purge_race_suite() -> None:
+    source = POSTGRES_RUNNER.read_text()
+
+    assert "tests/test_admin_activity_postgres.py" in source
+    assert "--junitxml=/tmp/postgres-results.xml" in source
+
+
 def test_0007_safe_pre_provider_allowlist_is_explicit() -> None:
     assert _safe_pre_provider_codes() == ("deal_expired",)
+
+
+def test_0008_cancellation_provenance_is_fully_reversible() -> None:
+    added_tables = set(_migration_operations(PROVENANCE_REVISION, "add_column"))
+    added_columns = set(_migration_column_names(PROVENANCE_REVISION, "add_column"))
+    dropped_columns = set(_migration_column_names(PROVENANCE_REVISION, "drop_column"))
+
+    assert added_tables == {
+        "cancellations",
+        "notification_deliveries",
+        "spend_ledger",
+    }
+    expected_columns = {
+        "cancellation_id",
+        "execution_simulated",
+        "prior_booking_status",
+        "prior_watch_status",
+        "provider",
+        "provider_correlation_id",
+        "provider_payload_json",
+    }
+    assert added_columns == expected_columns
+    assert dropped_columns == expected_columns
 
 
 def _migration_database_url() -> str:
@@ -391,8 +447,8 @@ def _seed_operational_rows(database_url: str) -> dict[str, UUID]:
                 )
             )
             db.flush()
-            db.add(
-                NotificationDelivery(
+            db.execute(
+                NotificationDelivery.__table__.insert().values(
                     id=ids["delivery"],
                     user_id=ids["user"],
                     booking_id=ids["booking"],
@@ -446,7 +502,7 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _enum_labels(database_url, "integration_environment") == ["TEST", "LIVE"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260710_0007"
+    assert _revision(database_url) == "20260710_0008"
     assert "tramp_stamp_ledger" in _table_names(database_url)
     assert "PENDING_TICKETING" not in _enum_labels(
         database_url, "booking_attempt_status"
@@ -477,7 +533,7 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _table_names(database_url) == ["alembic_version"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260710_0007"
+    assert _revision(database_url) == "20260710_0008"
 
 
 def test_0005_rejects_duplicate_attempt_claims_without_data_loss() -> None:
@@ -592,7 +648,7 @@ def test_0005_cleans_interrupted_concurrent_index_before_retry() -> None:
 
     _run_alembic(database_url, "upgrade", "head")
 
-    assert _revision(database_url) == "20260710_0007"
+    assert _revision(database_url) == "20260710_0008"
     assert temporary_index not in _index_names(database_url, "booking_attempts")
     assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
         database_url,

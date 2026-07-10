@@ -3,9 +3,12 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -23,7 +26,10 @@ os.environ.setdefault("INITIAL_ADMIN_EMAIL", "admin@example.com")
 os.environ.setdefault("INITIAL_ADMIN_PASSWORD", "test-admin-password")
 
 import app.admin_activity_service as activity_service
+from app import booking_service
+from app.activity_maintenance import acquire_activity_maintenance_lock
 from app.admin_activity_service import (
+    PurgePlanChangedError,
     execute_test_data_purge,
     preview_test_data_purge,
 )
@@ -85,6 +91,7 @@ from app.db.models import (
     UserRole,
     WatchTraveler,
 )
+from app.integrations.types import CancellationExecutionResult
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -382,6 +389,7 @@ def test_preview_and_execute_remove_only_simulated_activity(db: Session) -> None
         user=simulated_user,
         status=TripWatchStatus.FULFILLED,
     )
+    eligible_watch.value_pressure = 0.2
     mixed_watch = _add_watch(
         db,
         user=simulated_user,
@@ -609,7 +617,11 @@ def test_preview_and_execute_remove_only_simulated_activity(db: Session) -> None
         rejected_value_score=10.0,
         reason="wrong_airline",
         signal_type=FeedbackSignalType.PREFERENCE,
-        action_taken_json={"suppressed": ["airline:ZZ"]},
+        action_taken_json={
+            "suppressed": ["airline:ZZ"],
+            "value_pressure": 0.2,
+            "prior_watch_state": {"value_pressure": 0.0},
+        },
         created_at=learned_at,
     )
     live_feedback = DealFeedback(
@@ -766,6 +778,7 @@ def test_preview_and_execute_remove_only_simulated_activity(db: Session) -> None
         db=db,
         actor=admin,
         confirmation="PURGE TEST DATA",
+        preview_digest=preview.plan_digest,
     )
 
     assert result.deleted_counts == preview.deleted_counts
@@ -829,6 +842,7 @@ def test_preview_and_execute_remove_only_simulated_activity(db: Session) -> None
 
     assert _row_count(db, PriceStat) == 0
     assert db.get(TripWatch, eligible_watch.id).status == TripWatchStatus.ACTIVE
+    assert db.get(TripWatch, eligible_watch.id).value_pressure == 0.0
     assert db.get(TripWatch, mixed_watch.id).status == TripWatchStatus.FULFILLED
     assert db.get(TripWatch, live_watch.id).status == TripWatchStatus.FULFILLED
 
@@ -838,8 +852,11 @@ def test_preview_and_execute_remove_only_simulated_activity(db: Session) -> None
     assert len(purge_audits) == 1
     assert purge_audits[0].actor == f"user:{admin.id}"
     assert purge_audits[0].meta_json == {
+        "plan_digest": preview.plan_digest,
         "deleted_counts": preview.deleted_counts,
         "reset_watch_count": 1,
+        "warnings": [],
+        "unreverted_feedback_count": 0,
     }
 
 
@@ -892,12 +909,14 @@ def test_execute_rolls_back_every_delete_when_a_late_step_fails(
         return deleted
 
     monkeypatch.setattr(activity_service, "_delete_ids", fail_after_attempt_delete)
+    preview = preview_test_data_purge(db=db)
 
     with pytest.raises(RuntimeError, match="forced purge failure"):
         execute_test_data_purge(
             db=db,
             actor=admin,
             confirmation="PURGE TEST DATA",
+            preview_digest=preview.plan_digest,
         )
 
     for model, record_id in (
@@ -957,6 +976,14 @@ async def test_admin_routes_enforce_auth_confirmation_and_global_classification(
         provider="Duffel",
         label="route-live",
     )
+    simulated_owner_id = simulated_owner.id
+    live_owner_id = live_owner.id
+    simulated_watch_id = simulated_watch.id
+    live_watch_id = live_watch.id
+    simulated_deal_id = simulated_deal.id
+    simulated_booking_id = simulated_booking.id
+    live_deal_id = live_deal.id
+    live_booking_id = live_booking.id
     db.commit()
 
     with pytest.raises(HTTPException) as forbidden:
@@ -972,15 +999,33 @@ async def test_admin_routes_enforce_auth_confirmation_and_global_classification(
 
     with pytest.raises(HTTPException) as mismatch:
         await purge_test_data_record(
-            payload=AdminTestDataPurgeRequest(confirmation="purge test data"),
+            payload=AdminTestDataPurgeRequest(
+                confirmation="purge test data",
+                plan_digest=preview.plan_digest,
+            ),
             current_user=admin,
             db=db,
         )
     assert mismatch.value.status_code == 400
     assert "PURGE TEST DATA" in mismatch.value.detail
 
+    with pytest.raises(HTTPException) as stale:
+        await purge_test_data_record(
+            payload=AdminTestDataPurgeRequest(
+                confirmation="PURGE TEST DATA",
+                plan_digest="0" * 64,
+            ),
+            current_user=admin,
+            db=db,
+        )
+    assert stale.value.status_code == 400
+    assert "preview changed" in stale.value.detail
+
     executed = await purge_test_data_record(
-        payload=AdminTestDataPurgeRequest(confirmation="PURGE TEST DATA"),
+        payload=AdminTestDataPurgeRequest(
+            confirmation="PURGE TEST DATA",
+            plan_digest=preview.plan_digest,
+        ),
         current_user=admin,
         db=db,
     )
@@ -989,11 +1034,278 @@ async def test_admin_routes_enforce_auth_confirmation_and_global_classification(
     assert executed.reset_watch_count == 1
 
     db.expire_all()
-    assert db.get(User, simulated_owner.id) is not None
-    assert db.get(User, live_owner.id) is not None
-    assert db.get(TripWatch, simulated_watch.id).status == TripWatchStatus.ACTIVE
-    assert db.get(Deal, simulated_deal.id) is None
-    assert db.get(Booking, simulated_booking.id) is None
-    assert db.get(TripWatch, live_watch.id).status == TripWatchStatus.FULFILLED
-    assert db.get(Deal, live_deal.id) is not None
-    assert db.get(Booking, live_booking.id) is not None
+    assert db.get(User, simulated_owner_id) is not None
+    assert db.get(User, live_owner_id) is not None
+    assert db.get(TripWatch, simulated_watch_id).status == TripWatchStatus.ACTIVE
+    assert db.get(Deal, simulated_deal_id) is None
+    assert db.get(Booking, simulated_booking_id) is None
+    assert db.get(TripWatch, live_watch_id).status == TripWatchStatus.FULFILLED
+    assert db.get(Deal, live_deal_id) is not None
+    assert db.get(Booking, live_booking_id) is not None
+
+
+def test_mock_cancellation_on_live_booking_is_reversibly_purged(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin = _add_user(db, label="cancel-admin", role=UserRole.ADMIN)
+    user = _add_user(db, label="cancel-user")
+    watch = _add_watch(db, user=user, status=TripWatchStatus.FULFILLED)
+    deal = _add_deal(db, watch=watch, source="live-duffel", label="cancel-live")
+    booking = _add_booking(db, deal=deal, provider="Duffel", label="cancel-live")
+    original_charge = SpendLedger(
+        id=uuid4(),
+        user_id=user.id,
+        watch_id=watch.id,
+        booking_id=booking.id,
+        amount=Decimal("640.00"),
+        currency="USD",
+        booked_at=datetime.now(UTC),
+    )
+    db.add(original_charge)
+    db.commit()
+
+    resolved_at = datetime.now(UTC)
+    provider_result = CancellationExecutionResult(
+        provider="mock-booking",
+        simulated=True,
+        status=CancellationStatus.REFUNDED,
+        refund_expected=Decimal("640.00"),
+        refund_received=Decimal("640.00"),
+        currency="USD",
+        resolved_at=resolved_at,
+        provider_correlation_id="mock-cancel-correlation",
+        provider_payload={"simulated": True, "operation": "cancel"},
+    )
+    monkeypatch.setattr(booking_service, "get_mock_data_enabled", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        booking_service,
+        "get_booking_connector",
+        lambda **_kwargs: SimpleNamespace(
+            cancel_booking=lambda **_cancel_kwargs: provider_result
+        ),
+    )
+    monkeypatch.setattr(booking_service, "_enqueue_notification_tasks", lambda _items: None)
+
+    cancellation_response = booking_service.cancel_booking(
+        db=db,
+        user=user,
+        booking_id=booking.id,
+        reason="test cancellation",
+    )
+    cancellation_id = UUID(cancellation_response.id)
+    cancellation = db.get(Cancellation, cancellation_id)
+    assert cancellation is not None
+    assert cancellation.execution_simulated is True
+    assert cancellation.provider == "mock-booking"
+    assert cancellation.provider_payload_json == {
+        "simulated": True,
+        "operation": "cancel",
+    }
+    assert cancellation.prior_booking_status == BookingStatus.TICKETED
+    assert cancellation.prior_watch_status == TripWatchStatus.FULFILLED
+    refund = db.scalar(
+        select(SpendLedger).where(SpendLedger.cancellation_id == cancellation_id)
+    )
+    notice = db.scalar(
+        select(NotificationDelivery).where(
+            NotificationDelivery.cancellation_id == cancellation_id
+        )
+    )
+    assert refund is not None
+    assert notice is not None
+    assert db.get(Booking, booking.id).status == BookingStatus.CANCELLED
+    assert db.get(TripWatch, watch.id).status == TripWatchStatus.ACTIVE
+
+    preview = preview_test_data_purge(db=db)
+    assert preview.booking_ids == frozenset()
+    assert preview.deal_ids == frozenset()
+    assert preview.cancellation_ids == frozenset({cancellation_id})
+    assert preview.spend_ledger_ids == frozenset({refund.id})
+    assert preview.notification_delivery_ids == frozenset({notice.id})
+
+    execute_test_data_purge(
+        db=db,
+        actor=admin,
+        confirmation="PURGE TEST DATA",
+        preview_digest=preview.plan_digest,
+    )
+
+    assert db.get(Cancellation, cancellation_id) is None
+    assert db.get(SpendLedger, refund.id) is None
+    assert db.get(NotificationDelivery, notice.id) is None
+    assert db.get(SpendLedger, original_charge.id) is not None
+    assert db.get(Booking, booking.id).status == BookingStatus.TICKETED
+    assert db.get(Deal, deal.id) is not None
+    assert db.get(TripWatch, watch.id).status == TripWatchStatus.FULFILLED
+    assert (
+        db.scalar(
+            select(func.count())
+            .select_from(AuditLog)
+            .where(
+                AuditLog.action == "booking.cancelled",
+                AuditLog.meta_json["cancellation_id"].as_string()
+                == str(cancellation_id),
+            )
+        )
+        == 0
+    )
+
+
+def test_simulated_bookings_restore_live_deals_and_guard_watch_resets(
+    db: Session,
+) -> None:
+    admin = _add_user(db, label="restore-admin", role=UserRole.ADMIN)
+    user = _add_user(db, label="restore-user")
+    valid_watch = _add_watch(db, user=user, status=TripWatchStatus.FULFILLED)
+    expired_watch = _add_watch(db, user=user, status=TripWatchStatus.FULFILLED)
+    valid_deal = _add_deal(
+        db,
+        watch=valid_watch,
+        source="live-duffel",
+        label="restore-valid",
+    )
+    valid_deal.expires_at = datetime(2099, 1, 1, tzinfo=UTC)
+    valid_deal.confirm_token_hash = "consumed-valid-token"
+    expired_deal = _add_deal(
+        db,
+        watch=expired_watch,
+        source="live-duffel",
+        label="restore-expired",
+    )
+    expired_deal.expires_at = datetime(2020, 1, 1, tzinfo=UTC)
+    expired_deal.confirm_token_hash = "consumed-expired-token"
+    valid_booking = _add_booking(
+        db,
+        deal=valid_deal,
+        provider="mock-booking",
+        label="restore-valid",
+    )
+    expired_booking = _add_booking(
+        db,
+        deal=expired_deal,
+        provider="mock-booking",
+        label="restore-expired",
+    )
+    db.commit()
+
+    preview = preview_test_data_purge(db=db)
+    assert preview.deal_ids == frozenset()
+    assert preview.booking_ids == frozenset({valid_booking.id, expired_booking.id})
+    assert dict(preview.deal_status_restorations) == {
+        valid_deal.id: DealStatus.PROPOSED,
+        expired_deal.id: DealStatus.EXPIRED,
+    }
+
+    execute_test_data_purge(
+        db=db,
+        actor=admin,
+        confirmation="PURGE TEST DATA",
+        preview_digest=preview.plan_digest,
+    )
+
+    assert db.get(Booking, valid_booking.id) is None
+    assert db.get(Booking, expired_booking.id) is None
+    restored_valid = db.get(Deal, valid_deal.id)
+    restored_expired = db.get(Deal, expired_deal.id)
+    assert restored_valid is not None
+    assert restored_valid.status == DealStatus.PROPOSED
+    assert restored_valid.confirm_token_hash is None
+    assert restored_expired is not None
+    assert restored_expired.status == DealStatus.EXPIRED
+    assert restored_expired.confirm_token_hash is None
+    assert db.get(TripWatch, valid_watch.id).status == TripWatchStatus.ACTIVE
+    assert db.get(TripWatch, expired_watch.id).status == TripWatchStatus.ACTIVE
+
+
+def test_concurrent_live_booking_blocks_on_lock_and_invalidates_stale_digest(
+    db: Session,
+    postgres_engine: Engine,
+) -> None:
+    admin = _add_user(db, label="race-admin", role=UserRole.ADMIN)
+    user = _add_user(db, label="race-user")
+    watch = _add_watch(db, user=user, status=TripWatchStatus.FULFILLED)
+    simulated_deal = _add_deal(
+        db,
+        watch=watch,
+        source="mock-duffel",
+        label="race-simulated",
+    )
+    simulated_booking = _add_booking(
+        db,
+        deal=simulated_deal,
+        provider="mock-booking",
+        label="race-simulated",
+    )
+    watch_id = watch.id
+    simulated_deal_id = simulated_deal.id
+    simulated_booking_id = simulated_booking.id
+    db.commit()
+
+    writer_started = Event()
+    writer_acquired = Event()
+    with Session(postgres_engine, expire_on_commit=False) as preview_session:
+        stale_preview = preview_test_data_purge(db=preview_session)
+
+        def write_live_booking() -> tuple[UUID, UUID]:
+            with Session(postgres_engine, expire_on_commit=False) as writer:
+                writer_started.set()
+                acquire_activity_maintenance_lock(writer)
+                writer_acquired.set()
+                live_deal = Deal(
+                    id=uuid4(),
+                    watch_id=watch_id,
+                    kind="flight",
+                    source="live-duffel",
+                    total_price=Decimal("800.00"),
+                    currency="USD",
+                    framing=DealFraming.BEST_VALUE,
+                    fingerprint_hash=f"race-live-{uuid4()}",
+                    status=DealStatus.BOOKED,
+                )
+                writer.add(live_deal)
+                writer.flush()
+                live_booking = Booking(
+                    id=uuid4(),
+                    deal_id=live_deal.id,
+                    provider="Duffel",
+                    status=BookingStatus.TICKETED,
+                    idempotency_key=f"race-live-{uuid4()}",
+                    loyalty_manual_followup=False,
+                )
+                writer.add(live_booking)
+                writer.commit()
+                return live_deal.id, live_booking.id
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(write_live_booking)
+            assert writer_started.wait(timeout=5)
+            assert writer_acquired.wait(timeout=0.2) is False
+            preview_session.rollback()
+            live_deal_id, live_booking_id = future.result(timeout=5)
+
+    with Session(postgres_engine, expire_on_commit=False) as execute_session:
+        with pytest.raises(PurgePlanChangedError, match="preview changed"):
+            execute_test_data_purge(
+                db=execute_session,
+                actor=admin,
+                confirmation="PURGE TEST DATA",
+                preview_digest=stale_preview.plan_digest,
+            )
+
+        fresh_preview = preview_test_data_purge(db=execute_session)
+        assert fresh_preview.plan_digest != stale_preview.plan_digest
+        assert watch_id not in fresh_preview.reset_watch_ids
+        execute_test_data_purge(
+            db=execute_session,
+            actor=admin,
+            confirmation="PURGE TEST DATA",
+            preview_digest=fresh_preview.plan_digest,
+        )
+
+    db.expire_all()
+    assert db.get(Deal, simulated_deal_id) is None
+    assert db.get(Booking, simulated_booking_id) is None
+    assert db.get(Deal, live_deal_id) is not None
+    assert db.get(Booking, live_booking_id) is not None
+    assert db.get(TripWatch, watch_id).status == TripWatchStatus.FULFILLED

@@ -751,6 +751,16 @@ class Cancellation(UUIDPrimaryKeyMixin, Base):
     refund_expected: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     refund_received: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     currency: Mapped[str | None] = mapped_column(String(3))
+    provider: Mapped[str | None] = mapped_column(String(64))
+    provider_correlation_id: Mapped[str | None] = mapped_column(String(255))
+    provider_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    execution_simulated: Mapped[bool | None] = mapped_column(Boolean)
+    prior_booking_status: Mapped[BookingStatus | None] = mapped_column(
+        Enum(BookingStatus, name="booking_status"),
+    )
+    prior_watch_status: Mapped[TripWatchStatus | None] = mapped_column(
+        Enum(TripWatchStatus, name="trip_watch_status"),
+    )
     status: Mapped[CancellationStatus] = mapped_column(
         Enum(CancellationStatus, name="cancellation_status"),
         nullable=False,
@@ -776,6 +786,11 @@ class SpendLedger(UUIDPrimaryKeyMixin, Base):
     booking_id: Mapped[UUID | None] = mapped_column(
         SQLUUID(as_uuid=True),
         ForeignKey("bookings.id", ondelete="SET NULL"),
+    )
+    cancellation_id: Mapped[UUID | None] = mapped_column(
+        SQLUUID(as_uuid=True),
+        ForeignKey("cancellations.id", ondelete="SET NULL"),
+        index=True,
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
@@ -859,6 +874,11 @@ class NotificationDelivery(UUIDPrimaryKeyMixin, Base):
     deal_id: Mapped[UUID | None] = mapped_column(
         SQLUUID(as_uuid=True),
         ForeignKey("deals.id", ondelete="SET NULL"),
+        index=True,
+    )
+    cancellation_id: Mapped[UUID | None] = mapped_column(
+        SQLUUID(as_uuid=True),
+        ForeignKey("cancellations.id", ondelete="SET NULL"),
         index=True,
     )
     channel: Mapped[str] = mapped_column(String(64), nullable=False)

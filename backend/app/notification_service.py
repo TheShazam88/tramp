@@ -6,8 +6,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.activity_maintenance import acquire_activity_maintenance_lock
 from app.db.models import (
     Booking,
+    Cancellation,
     Deal,
     Disruption,
     NotificationChannel,
@@ -29,12 +31,14 @@ def queue_notification(
     subject: str,
     body: str,
     booking: Booking | None = None,
+    cancellation: Cancellation | None = None,
     deal: Deal | None = None,
     disruption: Disruption | None = None,
     channel: NotificationChannel = NotificationChannel.INHERIT,
     force: bool = False,
     integration: ResolvedIntegrationConfig | None = None,
 ) -> list[NotificationDelivery]:
+    acquire_activity_maintenance_lock(db)
     resolved_integration = integration or get_integration(
         db=db,
         key="notifications",
@@ -54,6 +58,7 @@ def queue_notification(
         delivery = NotificationDelivery(
             user_id=user.id,
             booking_id=booking.id if booking else None,
+            cancellation_id=cancellation.id if cancellation else None,
             disruption_id=disruption.id if disruption else None,
             deal_id=deal.id if deal else None,
             channel=destination_channel.value,
@@ -75,6 +80,7 @@ def queue_notification(
 
 
 def send_notification_delivery(*, db: Session, delivery_id: UUID) -> NotificationDelivery:
+    acquire_activity_maintenance_lock(db)
     delivery = db.scalar(select(NotificationDelivery).where(NotificationDelivery.id == delivery_id))
     if delivery is None:
         raise LookupError("Notification delivery not found.")
@@ -106,6 +112,9 @@ def send_notification_delivery(*, db: Session, delivery_id: UUID) -> Notificatio
             metadata={
                 "message_type": delivery.message_type,
                 "booking_id": str(delivery.booking_id) if delivery.booking_id else None,
+                "cancellation_id": (
+                    str(delivery.cancellation_id) if delivery.cancellation_id else None
+                ),
                 "deal_id": str(delivery.deal_id) if delivery.deal_id else None,
                 "disruption_id": str(delivery.disruption_id) if delivery.disruption_id else None,
             },
