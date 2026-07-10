@@ -7,6 +7,10 @@ import {
   integrationData,
   newWatchDraft,
 } from "@/api/mockData";
+import {
+  getMockBookingAttempt,
+  storeMockBookingAttempt,
+} from "@/api/mockBookingAttempts";
 import type {
   BookDealRequest,
   BookingAttemptReconciliation,
@@ -42,10 +46,6 @@ let runtimePolicyCache:
       currentInventoryMode: "mock" | "live" | "empty";
     }
   | null = null;
-const mockBookingAttempts = new Map<
-  string,
-  { request: BookDealRequest; result: DealApprovalResult }
->();
 
 async function withLatency<T>(payload: T) {
   await new Promise((resolve) => window.setTimeout(resolve, 120));
@@ -2386,17 +2386,24 @@ export const travelWatchApi = {
     idempotencyKey: string,
   ): Promise<BookingAttemptReconciliation> => {
     if (useMockData) {
-      const attempt = mockBookingAttempts.get(idempotencyKey);
+      const attempt = getMockBookingAttempt(idempotencyKey);
       if (attempt) {
         return withLatency({
           idempotencyKey,
-          dealId: attempt.request.dealId,
-          paymentMethodId: attempt.request.paymentMethodId,
-          status: "booked",
+          dealId: attempt.dealId,
+          paymentMethodId: attempt.paymentMethodId,
+          status: attempt.status,
           code: "booked",
           message: "Booking confirmed from the saved booking record.",
           safeToRetry: false,
-          booking: attempt.result,
+          booking: {
+            dealId: attempt.dealId,
+            bookingId: attempt.bookingId,
+            bookingStatus: attempt.bookingStatus,
+            confirmationNote: "Booking confirmed from the saved booking record.",
+            trampStampsAwarded: attempt.trampStampsAwarded,
+            trampStampBalance: attempt.trampStampBalance,
+          },
           startedAt: new Date().toISOString(),
           finishedAt: new Date().toISOString(),
         });
@@ -2532,8 +2539,11 @@ export const travelWatchApi = {
 
   bookDeal: async (payload: BookDealRequest): Promise<DealApprovalResult> => {
     if (useMockData) {
+      const dealId = payload.dealId;
+      const paymentMethodId = payload.paymentMethodId;
+      const idempotencyKey = payload.idempotencyKey;
       const result: DealApprovalResult = {
-        dealId: payload.dealId,
+        dealId,
         bookingId: "booking-ana",
         bookingStatus: "ticketed",
         provider: "ANA via Duffel",
@@ -2542,7 +2552,17 @@ export const travelWatchApi = {
         trampStampsAwarded: 0,
         trampStampBalance: 0,
       };
-      mockBookingAttempts.set(payload.idempotencyKey, { request: payload, result });
+      storeMockBookingAttempt({
+        idempotencyKey,
+        dealId,
+        paymentMethodId,
+        status: "booked",
+        bookingId: result.bookingId ?? "booking-ana",
+        bookingStatus: result.bookingStatus ?? "ticketed",
+        trampStampsAwarded: result.trampStampsAwarded,
+        trampStampBalance: result.trampStampBalance,
+      });
+      payload = undefined as never;
       return withLatency(result);
     }
 

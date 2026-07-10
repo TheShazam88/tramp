@@ -14,6 +14,7 @@ describe("travelWatchApi mock payment and booking isolation", () => {
 
   it("keeps payment mutations and booking execution off the backend", async () => {
     const { travelWatchApi } = await import("@/api/travelWatchApi");
+    const { inspectMockBookingAttempts } = await import("@/api/mockBookingAttempts");
     const workspace = await travelWatchApi.getProfileWorkspace();
 
     expect(workspace.paymentMethods).toEqual([
@@ -40,14 +41,30 @@ describe("travelWatchApi mock payment and booking isolation", () => {
     await travelWatchApi.deletePaymentMethod(workspace.paymentMethods[0].id);
     const booking = await travelWatchApi.bookDeal({
       dealId: "deal-1",
-      approvalToken: "mock-approval-token",
+      approvalToken: "approval-secret-value",
       paymentMethodId: workspace.paymentMethods[0].id,
-      totpCode: "123456",
-      masterKeyPassphrase: "",
+      totpCode: "987654",
+      masterKeyPassphrase: "master-secret-value",
       idempotencyKey: "00000000-0000-4000-8000-000000000001",
     });
 
     expect(booking.trampStampsAwarded).toBe(0);
+    expect(inspectMockBookingAttempts()).toEqual([
+      {
+        idempotencyKey: "00000000-0000-4000-8000-000000000001",
+        dealId: "deal-1",
+        paymentMethodId: workspace.paymentMethods[0].id,
+        status: "booked",
+        bookingId: "booking-ana",
+        bookingStatus: "ticketed",
+        trampStampsAwarded: 0,
+        trampStampBalance: 0,
+      },
+    ]);
+    const storedAttemptJson = JSON.stringify(inspectMockBookingAttempts());
+    expect(storedAttemptJson).not.toMatch(
+      /approval-secret-value|987654|master-secret-value|approvalToken|totpCode|masterKeyPassphrase/,
+    );
     expect(fetch).not.toHaveBeenCalled();
   });
 });
