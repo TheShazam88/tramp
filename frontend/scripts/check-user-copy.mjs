@@ -62,10 +62,10 @@ async function collect(path, { explicitFile = false } = {}) {
   }
 
   for (const entry of entries) {
-    if (entry.isSymbolicLink()) continue;
     if (
-      entry.isDirectory() &&
-      (entry.name.startsWith(".") || entry.name === "node_modules")
+      entry.isSymbolicLink() ||
+      entry.name.startsWith(".") ||
+      entry.name === "node_modules"
     ) {
       continue;
     }
