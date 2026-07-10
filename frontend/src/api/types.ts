@@ -407,8 +407,10 @@ export interface IntegrationFlag {
 }
 
 export interface IntegrationAcquisitionGuide {
-  signupUrl: string;
-  applicationUrl?: string;
+  links: Array<{
+    label: string;
+    url: string;
+  }>;
   accountRequirements: string[];
   steps: string[];
   environmentNotes: string[];

@@ -503,8 +503,10 @@ interface ApprovalResponseRaw {
 }
 
 interface AdminIntegrationAcquisitionGuideRaw {
-  signup_url?: string | null;
-  application_url?: string | null;
+  links?: Array<{
+    label?: string | null;
+    url?: string | null;
+  }> | null;
   account_requirements?: string[] | null;
   steps?: string[] | null;
   environment_notes?: string[] | null;
@@ -953,14 +955,22 @@ function mapIntegrationFlags(
 function mapIntegrationAcquisitionGuide(
   raw: AdminIntegrationAcquisitionGuideRaw | null | undefined,
 ): IntegrationData["providers"][number]["guide"] {
-  const signupUrl = coerceString(raw?.signup_url);
-  if (!raw || !signupUrl) {
+  if (!raw || !Array.isArray(raw.links)) {
+    return undefined;
+  }
+
+  const links = raw.links
+    .map((link) => ({
+      label: coerceString(link.label),
+      url: coerceString(link.url),
+    }))
+    .filter((link) => link.label && link.url);
+  if (links.length === 0) {
     return undefined;
   }
 
   return {
-    signupUrl,
-    applicationUrl: coerceString(raw.application_url) || undefined,
+    links,
     accountRequirements: asStringList(raw.account_requirements),
     steps: asStringList(raw.steps),
     environmentNotes: asStringList(raw.environment_notes),

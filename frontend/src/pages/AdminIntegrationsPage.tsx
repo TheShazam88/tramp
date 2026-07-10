@@ -20,8 +20,8 @@ const toneByStatus = {
 } as const;
 
 const environmentOptions = ["test", "live", "off"] as const;
-const bookingProviderOptions = ["duffel", "amadeus", "kiwi", "custom"] as const;
-const hotelProviderOptions = ["hotelbeds", "booking", "expedia", "agoda", "sabre", "custom"] as const;
+const bookingProviderOptions = ["duffel", "amadeus", "kiwi"] as const;
+const hotelProviderOptions = ["hotelbeds", "booking"] as const;
 const messagingModeOptions = ["log_only", "smtp_dev", "telegram_bot"] as const;
 const calendarModeOptions = ["log_only", "google_calendar"] as const;
 
@@ -153,6 +153,20 @@ function getSensitivePlaceholder(
 
 function withCurrentOption(options: readonly string[], currentValue: string) {
   return currentValue && !options.includes(currentValue) ? [currentValue, ...options] : [...options];
+}
+
+function guideForProvider(
+  guide: IntegrationProvider["guide"],
+  providerKey: string,
+) {
+  if (!guide || !providerKey) {
+    return undefined;
+  }
+  const linkNeedle = providerKey === "booking" ? "booking.com" : providerKey;
+  const links = guide.links.filter((link) =>
+    link.label.toLowerCase().includes(linkNeedle),
+  );
+  return links.length > 0 ? { ...guide, links } : undefined;
 }
 
 function compactJoin(values: string[]) {
@@ -783,10 +797,13 @@ export function AdminIntegrationsPage() {
 
   const renderHotelConnectorCard = (provider: IntegrationProvider, draft: ConnectorDraft) => {
     const providerField = provider.credentialFields.find((field) => field.key === "provider");
-    const apiKeyField = provider.credentialFields.find((field) => field.key === "api_key");
+    const providerValue = String(draft.credentials.provider ?? "").trim().toLowerCase();
+    const hotelbedsFields = provider.credentialFields.filter(
+      (field) => field.key === "api_key" || field.key === "api_secret",
+    );
     const providerOptions = withCurrentOption(
       hotelProviderOptions,
-      String(draft.credentials.provider ?? "").trim().toLowerCase(),
+      providerValue,
     );
 
     return (
@@ -876,33 +893,46 @@ export function AdminIntegrationsPage() {
         <div className="form-shell">
           <p className="field-label">API access</p>
           <CredentialGuide providerName={provider.name} guide={provider.guide} />
-          <div className="form-grid">
-            <label className="field-stack field-span-full">
-              <span>{apiKeyField?.label ?? "API key"}</span>
-              <input
-                className="text-input"
-                type="password"
-                value={draft.credentials.api_key ?? ""}
-                placeholder={getSensitivePlaceholder(
-                  provider.credentialsMasked?.api_key,
-                  apiKeyField?.placeholder || "Paste the hotel provider API key",
-                )}
-                onChange={(event) =>
-                  updateConnectorDraft(provider.key, (current) => ({
-                    ...current,
-                    credentials: {
-                      ...current.credentials,
-                      api_key: event.target.value,
-                    },
-                  }))
-                }
-              />
-              <p className="helper-copy">
-                {apiKeyField?.helpText ??
-                  "Leave blank if you only want to keep the current stored hotel key."}
-              </p>
-            </label>
-          </div>
+          {providerValue === "hotelbeds" ? (
+            <div className="form-grid">
+              {hotelbedsFields.map((field) => (
+                <label
+                  key={`${provider.key}-${field.key}`}
+                  className="field-stack field-span-full"
+                >
+                  <span>{field.label}</span>
+                  <input
+                    className="text-input"
+                    type="password"
+                    value={draft.credentials[field.key] ?? ""}
+                    placeholder={getSensitivePlaceholder(
+                      provider.credentialsMasked?.[field.key],
+                      field.placeholder || `Paste ${field.label}`,
+                    )}
+                    onChange={(event) =>
+                      updateConnectorDraft(provider.key, (current) => ({
+                        ...current,
+                        credentials: {
+                          ...current.credentials,
+                          [field.key]: event.target.value,
+                        },
+                      }))
+                    }
+                  />
+                  {field.helpText ? (
+                    <p className="helper-copy">{field.helpText}</p>
+                  ) : null}
+                </label>
+              ))}
+            </div>
+          ) : providerValue ? (
+            <div className="notice notice-alert">
+              TRAMP does not define a {titleize(providerValue)} credential shape in this
+              connector.
+            </div>
+          ) : (
+            <div className="notice">Choose a hotel provider to see supported fields.</div>
+          )}
         </div>
 
         {provider.featureFlagDefinitions.length > 0 ? (
@@ -1155,6 +1185,18 @@ export function AdminIntegrationsPage() {
     );
     const linkedProfile = profileOptions.find((profile) => profile.id === draft.credentialProfileId);
     const usingSharedProfile = Boolean(draft.credentialProfileId);
+    const effectiveProviderValue = usingSharedProfile
+      ? linkedProfile?.providerKey ?? providerValue
+      : providerValue;
+    const directFieldKeys: Record<string, string[]> = {
+      duffel: ["access_token", "account_id"],
+      amadeus: ["client_id", "client_secret", "account_id"],
+      kiwi: ["api_key", "account_id"],
+    };
+    const visibleDirectFields = provider.credentialFields.filter((field) =>
+      (directFieldKeys[providerValue] ?? []).includes(field.key),
+    );
+    const directGuide = guideForProvider(provider.guide, providerValue);
 
     return (
       <Surface key={provider.key} className="watch-card">
@@ -1168,7 +1210,7 @@ export function AdminIntegrationsPage() {
           </Surface>
           <Surface className="field-card">
             <p className="field-label">Provider family</p>
-            <strong>{providerValue || linkedProfile?.providerKey || "Not set"}</strong>
+            <strong>{effectiveProviderValue || "Not set"}</strong>
             <p className="helper-copy">Select the booking provider family and optionally link a shared flight credential profile.</p>
           </Surface>
           <Surface className="field-card">
@@ -1204,7 +1246,8 @@ export function AdminIntegrationsPage() {
               <span>Booking provider</span>
               <select
                 className="text-input"
-                value={draft.credentials.provider ?? ""}
+                value={effectiveProviderValue}
+                disabled={usingSharedProfile}
                 onChange={(event) =>
                   updateConnectorDraft(provider.key, (current) => ({
                     ...current,
@@ -1247,12 +1290,21 @@ export function AdminIntegrationsPage() {
               <select
                 className="text-input"
                 value={draft.credentialProfileId}
-                onChange={(event) =>
+                onChange={(event) => {
+                  const nextProfile = profileOptions.find(
+                    (profile) => profile.id === event.target.value,
+                  );
                   updateConnectorDraft(provider.key, (current) => ({
                     ...current,
                     credentialProfileId: event.target.value,
-                  }))
-                }
+                    credentials: nextProfile
+                      ? {
+                          ...current.credentials,
+                          provider: nextProfile.providerKey,
+                        }
+                      : current.credentials,
+                  }));
+                }}
               >
                 <option value="">No shared profile</option>
                 {profileOptions.map((profile) => (
@@ -1265,7 +1317,7 @@ export function AdminIntegrationsPage() {
           </div>
           {usingSharedProfile ? (
             <p className="helper-copy">
-              This booking connector will use the linked shared profile first. Any override fields below are kept masked and only replace stored values when you type a new value.
+              This booking connector uses the linked profile as its provider and credential source.
             </p>
           ) : (
             <p className="helper-copy">
@@ -1274,61 +1326,67 @@ export function AdminIntegrationsPage() {
           )}
         </div>
 
-        <div className="form-shell">
-          <p className="field-label">Credential overrides</p>
-          <CredentialGuide providerName={provider.name} guide={provider.guide} />
-          <div className="form-grid">
-            {provider.credentialFields.map((field) => (
-              <label
-                key={`${provider.key}-${field.key}`}
-                className={`field-stack ${field.key === "access_token" || field.key === "api_secret" ? "field-span-full" : ""}`}
-              >
-                <span>{field.label}</span>
-                {field.key === "provider" ? (
-                  <input
-                    className="text-input"
-                    type="text"
-                    value={draft.credentials[field.key] ?? ""}
-                    placeholder={field.placeholder}
-                    onChange={(event) =>
-                      updateConnectorDraft(provider.key, (current) => ({
-                        ...current,
-                        credentials: {
-                          ...current.credentials,
-                          [field.key]: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                ) : (
-                  <input
-                    className="text-input"
-                    type={field.sensitive ? "password" : "text"}
-                    value={draft.credentials[field.key] ?? ""}
-                    placeholder={
-                      field.sensitive
-                        ? getSensitivePlaceholder(
-                            provider.credentialsMasked?.[field.key],
-                            field.placeholder || "Type a new value to replace",
-                          )
-                        : field.placeholder
-                    }
-                    onChange={(event) =>
-                      updateConnectorDraft(provider.key, (current) => ({
-                        ...current,
-                        credentials: {
-                          ...current.credentials,
-                          [field.key]: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                )}
-                {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
-              </label>
-            ))}
+        {!usingSharedProfile ? (
+          <div className="form-shell">
+            <p className="field-label">Direct provider credentials</p>
+            {directGuide ? (
+              <CredentialGuide
+                providerName={titleize(providerValue)}
+                guide={directGuide}
+              />
+            ) : null}
+            {visibleDirectFields.length > 0 ? (
+              <div className="form-grid">
+                {visibleDirectFields.map((field) => (
+                  <label
+                    key={`${provider.key}-${field.key}`}
+                    className="field-stack field-span-full"
+                  >
+                    <span>{field.label}</span>
+                    <input
+                      className="text-input"
+                      type={field.sensitive ? "password" : "text"}
+                      value={draft.credentials[field.key] ?? ""}
+                      placeholder={
+                        field.sensitive
+                          ? getSensitivePlaceholder(
+                              provider.credentialsMasked?.[field.key],
+                              field.placeholder || "Type a new value to replace",
+                            )
+                          : field.placeholder
+                      }
+                      onChange={(event) =>
+                        updateConnectorDraft(provider.key, (current) => ({
+                          ...current,
+                          credentials: {
+                            ...current.credentials,
+                            [field.key]: event.target.value,
+                          },
+                        }))
+                      }
+                    />
+                    {field.helpText ? (
+                      <p className="helper-copy">{field.helpText}</p>
+                    ) : null}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="notice notice-alert">
+                Direct booking supports Duffel, Amadeus, or Kiwi. Choose one or link a
+                matching shared profile.
+              </div>
+            )}
           </div>
-        </div>
+        ) : (
+          <Surface className="inset-card">
+            <p className="field-label">Shared profile is the credential source</p>
+            <p className="helper-copy">
+              Direct fields and their setup guide are hidden. Edit the linked profile
+              above to replace its provider credentials.
+            </p>
+          </Surface>
+        )}
 
         <Surface className="inset-card">
           <p className="field-label">Execution notes</p>
@@ -1709,44 +1767,45 @@ export function AdminIntegrationsPage() {
           )}
         </div>
 
-        <CredentialGuide providerName={provider.name} guide={provider.guide} />
-
         {(!usingSharedProfile || showAdvancedOverrides) ? (
-          <div className="form-shell">
-            <p className="field-label">
-              {usingSharedProfile ? "Advanced connector-only overrides" : "Connector-specific credentials"}
-            </p>
-            <div className="form-grid">
-              {provider.credentialFields.map((field) => (
-                <label key={`${provider.key}-${field.key}`} className="field-stack">
-                  <span>{field.label}</span>
-                  <input
-                    className="text-input"
-                    type={field.sensitive ? "password" : "text"}
-                    value={draft.credentials[field.key] ?? ""}
-                    placeholder={
-                      field.sensitive
-                        ? getSensitivePlaceholder(
-                            provider.credentialsMasked?.[field.key],
-                            field.placeholder || "Type a new value to replace",
-                          )
-                        : field.placeholder
-                    }
-                    onChange={(event) =>
-                      updateConnectorDraft(provider.key, (current) => ({
-                        ...current,
-                        credentials: {
-                          ...current.credentials,
-                          [field.key]: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                  {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
-                </label>
-              ))}
+          <>
+            <CredentialGuide providerName={provider.name} guide={provider.guide} />
+            <div className="form-shell">
+              <p className="field-label">
+                {usingSharedProfile ? "Advanced connector-only overrides" : "Connector-specific credentials"}
+              </p>
+              <div className="form-grid">
+                {provider.credentialFields.map((field) => (
+                  <label key={`${provider.key}-${field.key}`} className="field-stack">
+                    <span>{field.label}</span>
+                    <input
+                      className="text-input"
+                      type={field.sensitive ? "password" : "text"}
+                      value={draft.credentials[field.key] ?? ""}
+                      placeholder={
+                        field.sensitive
+                          ? getSensitivePlaceholder(
+                              provider.credentialsMasked?.[field.key],
+                              field.placeholder || "Type a new value to replace",
+                            )
+                          : field.placeholder
+                      }
+                      onChange={(event) =>
+                        updateConnectorDraft(provider.key, (current) => ({
+                          ...current,
+                          credentials: {
+                            ...current.credentials,
+                            [field.key]: event.target.value,
+                          },
+                        }))
+                      }
+                    />
+                    {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
+          </>
         ) : null}
 
         {provider.featureFlagDefinitions.length > 0 ? (

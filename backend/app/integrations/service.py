@@ -625,8 +625,24 @@ def _validate_credentials(
             raise ValueError("flights_kiwi requires api_key.")
         return
 
+    if key == "hotels":
+        provider = str(credentials.get("provider") or "").strip().lower()
+        if provider == "hotelbeds":
+            missing = [
+                field
+                for field in ("api_key", "api_secret")
+                if not str(credentials.get(field) or "").strip()
+            ]
+            if missing:
+                raise ValueError(f"hotels using hotelbeds requires: {', '.join(missing)}.")
+        return
+
     if key == "booking":
         provider = (profile_provider_key or str(credentials.get("provider") or "")).strip().lower()
+        if not provider:
+            raise ValueError(
+                "booking requires a provider or a matching shared credential profile."
+            )
         if provider == "amadeus":
             missing = [
                 field
@@ -641,6 +657,10 @@ def _validate_credentials(
             if not str(credentials.get(accepted_key) or "").strip():
                 raise ValueError(f"booking using {provider} requires {accepted_key}.")
             return
+        raise ValueError(
+            "booking provider must be duffel, amadeus, or kiwi, "
+            "or use a matching shared credential profile."
+        )
 
     if key == "notifications":
         delivery_mode = str(credentials.get("delivery_mode") or "log_only").strip().lower()

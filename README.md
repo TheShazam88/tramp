@@ -69,7 +69,7 @@ Provider credentials now live primarily in the TRAMP admin UI instead of only in
 
 - Go to `Admin` after logging in
 - Save credentials, modes, and feature flags per integration
-- Use `Test connection` to validate the currently saved state
+- Use `Test connection` for a local presence and shape check unless the UI explicitly says it makes a provider network request
 - Settings are stored encrypted at rest in PostgreSQL and survive restart
 
 Supported v2 admin-managed surfaces include:
@@ -82,12 +82,13 @@ Supported v2 admin-managed surfaces include:
 
 ### Provider access and credential acquisition
 
-- Flights: follow the official [Amadeus quick start](https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/quick-start/) or [Duffel flights guide](https://duffel.com/docs/guides/getting-started-with-flights). [Kiwi Tequila](https://tequila.kiwi.com/) access is partner and approval driven, so a key may not be available immediately.
-- Hotels and booking: choose a provider first. [Hotelbeds](https://developer.hotelbeds.com/documentation/getting-started/) and the [Booking.com Demand API](https://developers.booking.com/demand) have separate account, credential, and environment requirements. One provider key does not authorize another provider.
-- Notifications: `log_only` and local Mailpit need no universal API key. Use credentials from your own SMTP provider when its server requires authentication. Create Telegram bots only through the official [BotFather tutorial](https://core.telegram.org/bots/tutorial).
-- Calendar: use the official [Google Calendar quickstart](https://developers.google.com/workspace/calendar/api/quickstart/python) to set up a Google Cloud project, OAuth client, and user authorization.
+- Flights: follow the official [Amadeus quick start](https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/quick-start/) or [Duffel flights guide](https://duffel.com/docs/guides/getting-started-with-flights). New Kiwi Tequila partnerships are invitation only according to [Kiwi's official announcement](https://media.kiwi.com/articles-and-interviews/better-for-business-kiwi-com-takes-a-new-approach-to-partnerships/).
+- Hotels: choose a provider first. [Hotelbeds](https://developer.hotelbeds.com/documentation/getting-started/) requires both an API Key and Secret for X-Signature authentication. The [Booking.com Demand API](https://developers.booking.com/demand) uses separate access and does not share Hotelbeds credentials.
+- Booking: direct Duffel setup uses `access_token`, Amadeus uses `client_id` and `client_secret`, and Kiwi uses `api_key` after invitation-only access. A matching shared provider profile can supply the same shape.
+- Notifications: `log_only` and local Mailpit need no universal API key. Hosted SMTP uses credentials from your SMTP provider and can send external email. A bot created with the official [BotFather tutorial](https://core.telegram.org/bots/tutorial) can send external Telegram messages.
+- Calendar: follow the [Google Calendar create events guide](https://developers.google.com/workspace/calendar/api/guides/create-events), configure OAuth consent and a client, and authorize `https://www.googleapis.com/auth/calendar`. Google mode can create and delete live events.
 
-These settings prepare encrypted provider configuration and local diagnostics. The current local-safe connectors remain simulated and do not become live search, booking, notification, or calendar implementations just because credentials are saved.
+Flight search, hotel search, and booking connectors remain simulated and do not become live provider implementations just because credentials are saved. SMTP, Telegram, and Google Calendar are different: those modes perform real external side effects when configured and used.
 
 Admin UI sequence:
 
@@ -95,16 +96,17 @@ Admin UI sequence:
 2. Expand `How to get ... credentials` above the credential fields.
 3. Follow the official setup or application link and start with test access when available.
 4. Save credentials in a shared profile or directly on the connector.
-5. Link the profile where supported, then run `Test connection`.
-6. Select live only after the provider grants the required production capability and the connector has a real live implementation.
+5. Link the profile where supported, then run `Test connection`. Most connectors only check local presence and shape; Google Calendar mode performs a network reachability check.
+6. Treat SMTP, Telegram, and Google Calendar as live external side effects. Flight, hotel, and booking stay simulated until real provider connectors are implemented.
 
 ## Notification and calendar behavior
 
 - Notification mode defaults to `log_only`
 - SMTP dev mode can be pointed at a local mail sink such as MailHog/Mailpit
-- Telegram mode can use a test bot token
+- Hosted SMTP can send external email when selected and used
+- Telegram mode calls the Telegram Bot API and can send external messages
 - Calendar mode defaults to `log_only`
-- Google Calendar mode can be enabled by saving `calendar_id` and `access_token` in Admin
+- Google Calendar mode can create and delete live events after saving a write-scoped `access_token` and `calendar_id` in Admin
 
 Booking and cancellation flows now record notification delivery state and calendar sync detail so localhost runs remain observable.
 

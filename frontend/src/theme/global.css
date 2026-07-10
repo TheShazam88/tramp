@@ -973,6 +973,38 @@ a.button {
   display: none;
 }
 
+.credential-guide-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-radius: 10px;
+}
+
+.credential-guide-summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--value) 42%, transparent);
+  outline-offset: 5px;
+}
+
+.credential-guide-state {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--value);
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.credential-guide-chevron {
+  display: inline-block;
+  transition: transform 180ms ease;
+}
+
+.credential-guide-chevron-open {
+  transform: rotate(90deg);
+}
+
 .form-grid-gap-top {
   margin-top: 1rem;
 }

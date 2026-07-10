@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { IntegrationAcquisitionGuide } from "@/api/types";
 
 interface CredentialGuideProps {
@@ -9,33 +11,59 @@ export function CredentialGuide({
   providerName,
   guide,
 }: CredentialGuideProps) {
+  const [isOpen, setIsOpen] = useState(false);
+
   if (!guide) {
     return null;
   }
 
   return (
-    <details className="form-disclosure credential-guide">
-      <summary>How to get {providerName} credentials</summary>
+    <details
+      className="form-disclosure credential-guide"
+      onToggle={(event) => setIsOpen(event.currentTarget.open)}
+    >
+      <summary
+        className="credential-guide-summary"
+        aria-expanded={isOpen}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") {
+            return;
+          }
+          event.preventDefault();
+          const disclosure = event.currentTarget.parentElement;
+          if (disclosure instanceof HTMLDetailsElement) {
+            disclosure.open = !disclosure.open;
+            setIsOpen(disclosure.open);
+          }
+        }}
+      >
+        <span>How to get {providerName} credentials</span>
+        <span className="credential-guide-state">
+          <span
+            className={`credential-guide-chevron ${
+              isOpen ? "credential-guide-chevron-open" : ""
+            }`}
+            aria-hidden="true"
+          >
+            ▸
+          </span>
+          <span>{isOpen ? "Hide setup guide" : "Show setup guide"}</span>
+        </span>
+      </summary>
       <div className="stack-tight form-grid-gap-top">
         <div className="panel-actions">
-          <a
-            className="helper-link"
-            href={guide.signupUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Open official {providerName} setup guide
-          </a>
-          {guide.applicationUrl ? (
+          {guide.links.map((link) => (
             <a
+              key={`${link.label}-${link.url}`}
               className="helper-link"
-              href={guide.applicationUrl}
+              href={link.url}
               target="_blank"
               rel="noreferrer"
             >
-              Open official {providerName} application guide
+              {link.label}
             </a>
-          ) : null}
+          ))}
         </div>
 
         <div>

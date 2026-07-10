@@ -13,8 +13,16 @@ import { travelWatchApi } from "@/api/travelWatchApi";
 import { AdminIntegrationsPage } from "@/pages/AdminIntegrationsPage";
 
 const acquisitionGuide: IntegrationAcquisitionGuide = {
-  signupUrl: "https://provider.example/setup",
-  applicationUrl: "https://provider.example/apply",
+  links: [
+    { label: "Duffel flights getting started", url: "https://duffel.example/setup" },
+    { label: "Amadeus quick start", url: "https://amadeus.example/setup" },
+    {
+      label: "Kiwi invitation-only partnership announcement",
+      url: "https://kiwi.example/partners",
+    },
+    { label: "Hotelbeds getting started", url: "https://hotelbeds.example/setup" },
+    { label: "Booking.com Demand API", url: "https://booking.example/demand" },
+  ],
   accountRequirements: ["Provider account"],
   steps: ["Create credentials", "Save the credentials"],
   environmentNotes: ["Start in test"],
@@ -184,10 +192,11 @@ describe("AdminIntegrationsPage credential guide placement", () => {
         credentialsMasked: { provider: "hotelbeds" },
         credentialFields: [
           { key: "provider", label: "Provider", sensitive: false },
-          { key: "api_key", label: "API key", sensitive: true },
+          { key: "api_key", label: "Hotelbeds API key", sensitive: true },
+          { key: "api_secret", label: "Hotelbeds API secret", sensitive: true },
         ],
       }),
-      fieldName: "API key",
+      fieldName: "Hotelbeds API key",
     },
     {
       label: "booking",
@@ -199,10 +208,14 @@ describe("AdminIntegrationsPage credential guide placement", () => {
         credentialsMasked: { provider: "duffel" },
         credentialFields: [
           { key: "provider", label: "Provider", sensitive: false },
-          { key: "access_token", label: "Access token", sensitive: true },
+          { key: "access_token", label: "Duffel access token", sensitive: true },
+          { key: "client_id", label: "Amadeus Client ID", sensitive: true },
+          { key: "client_secret", label: "Amadeus Client secret", sensitive: true },
+          { key: "api_key", label: "Kiwi Tequila API key", sensitive: true },
         ],
       }),
-      fieldName: "Access token",
+      fieldName: "Duffel access token",
+      guideProviderName: "Duffel",
     },
     {
       label: "messaging",
@@ -250,7 +263,7 @@ describe("AdminIntegrationsPage credential guide placement", () => {
     },
   ])(
     "renders one guide before the $label connector credential fields",
-    async ({ category, provider, fieldName }) => {
+    async ({ category, provider, fieldName, guideProviderName }) => {
       renderCategory(category, [provider]);
 
       const providerHeading = await screen.findByRole("heading", {
@@ -261,9 +274,215 @@ describe("AdminIntegrationsPage credential guide placement", () => {
       expect(providerCard).not.toBeNull();
       expectGuideImmediatelyBeforeField(
         providerCard as HTMLElement,
-        provider.name,
+        guideProviderName ?? provider.name,
         fieldName,
       );
     },
   );
+
+  it.each([
+    {
+      providerKey: "duffel",
+      providerLabel: "Duffel",
+      visibleFields: ["Duffel access token"],
+      hiddenFields: ["Amadeus Client ID", "Amadeus Client secret", "Kiwi Tequila API key"],
+      linkName: "Duffel flights getting started",
+    },
+    {
+      providerKey: "amadeus",
+      providerLabel: "Amadeus",
+      visibleFields: ["Amadeus Client ID", "Amadeus Client secret"],
+      hiddenFields: ["Duffel access token", "Kiwi Tequila API key"],
+      linkName: "Amadeus quick start",
+    },
+    {
+      providerKey: "kiwi",
+      providerLabel: "Kiwi",
+      visibleFields: ["Kiwi Tequila API key"],
+      hiddenFields: ["Duffel access token", "Amadeus Client ID", "Amadeus Client secret"],
+      linkName: "Kiwi invitation-only partnership announcement",
+    },
+  ])(
+    "renders only $providerLabel direct booking credentials and links",
+    async ({
+      providerKey,
+      providerLabel,
+      visibleFields,
+      hiddenFields,
+      linkName,
+    }) => {
+      const provider = buildProvider({
+        key: "booking",
+        name: "Booking",
+        category: "booking",
+        supportsSharedProfile: true,
+        compatibleProfileProviderKeys: ["duffel", "amadeus", "kiwi"],
+        credentialsMasked: { provider: providerKey },
+        credentialFields: [
+          { key: "provider", label: "Provider", sensitive: false },
+          { key: "access_token", label: "Duffel access token", sensitive: true },
+          { key: "client_id", label: "Amadeus Client ID", sensitive: true },
+          { key: "client_secret", label: "Amadeus Client secret", sensitive: true },
+          { key: "api_key", label: "Kiwi Tequila API key", sensitive: true },
+        ],
+      });
+      renderCategory("booking", [provider]);
+
+      const heading = await screen.findByRole("heading", { name: "Booking" });
+      const card = heading.closest(".watch-card") as HTMLElement;
+      const cardQueries = within(card);
+
+      for (const fieldName of visibleFields) {
+        expect(cardQueries.getByLabelText(fieldName, { exact: false })).toBeInTheDocument();
+      }
+      for (const fieldName of hiddenFields) {
+        expect(cardQueries.queryByLabelText(fieldName, { exact: false })).not.toBeInTheDocument();
+      }
+      expect(
+        cardQueries.getByText(`How to get ${providerLabel} credentials`),
+      ).toBeInTheDocument();
+      expect(
+        cardQueries.getByRole("link", { name: linkName, hidden: true }),
+      ).toBeInTheDocument();
+      expect(card.querySelectorAll(".credential-guide a")).toHaveLength(1);
+    },
+  );
+
+  it("renders complete Hotelbeds fields and labeled provider destinations", async () => {
+    const provider = buildProvider({
+      key: "hotels",
+      name: "Hotels",
+      category: "hotels",
+      credentialsMasked: { provider: "hotelbeds" },
+      credentialFields: [
+        { key: "provider", label: "Provider", sensitive: false },
+        { key: "api_key", label: "Hotelbeds API key", sensitive: true },
+        { key: "api_secret", label: "Hotelbeds API secret", sensitive: true },
+      ],
+    });
+    renderCategory("hotels", [provider]);
+
+    const heading = await screen.findByRole("heading", { name: "Hotels" });
+    const card = heading.closest(".watch-card") as HTMLElement;
+    const cardQueries = within(card);
+
+    expect(cardQueries.getByLabelText("Hotelbeds API key")).toBeInTheDocument();
+    expect(cardQueries.getByLabelText("Hotelbeds API secret")).toBeInTheDocument();
+    expect(
+      cardQueries.getByRole("link", {
+        name: "Hotelbeds getting started",
+        hidden: true,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      cardQueries.getByRole("link", {
+        name: "Booking.com Demand API",
+        hidden: true,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("labels unsupported non-Hotelbeds credential shapes", async () => {
+    const provider = buildProvider({
+      key: "hotels",
+      name: "Hotels",
+      category: "hotels",
+      credentialsMasked: { provider: "booking" },
+      credentialFields: [
+        { key: "provider", label: "Provider", sensitive: false },
+        { key: "api_key", label: "Hotelbeds API key", sensitive: true },
+        { key: "api_secret", label: "Hotelbeds API secret", sensitive: true },
+      ],
+    });
+    renderCategory("hotels", [provider]);
+
+    const heading = await screen.findByRole("heading", { name: "Hotels" });
+    const card = heading.closest(".watch-card") as HTMLElement;
+    const cardQueries = within(card);
+
+    expect(
+      cardQueries.getByText(
+        "TRAMP does not define a Booking credential shape in this connector.",
+      ),
+    ).toBeInTheDocument();
+    expect(cardQueries.queryByLabelText("Hotelbeds API key")).not.toBeInTheDocument();
+    expect(cardQueries.queryByLabelText("Hotelbeds API secret")).not.toBeInTheDocument();
+  });
+
+  it("does not duplicate a flight guide when a shared profile hides direct fields", async () => {
+    const provider = buildProvider({
+      key: "flights_amadeus",
+      name: "Flights · Amadeus",
+      category: "flights",
+      providerKey: "amadeus",
+      supportsSharedProfile: true,
+      compatibleProfileProviderKeys: ["amadeus"],
+      credentialProfileId: "profile-amadeus",
+      credentialFields: [
+        { key: "client_id", label: "Client ID", sensitive: true },
+      ],
+    });
+    renderCategory("flights", [provider], [
+      {
+        id: "profile-amadeus",
+        providerKey: "amadeus",
+        label: "Amadeus profile",
+        credentialsMasked: {},
+        usageIntegrationKeys: ["flights_amadeus"],
+      },
+    ]);
+
+    const heading = await screen.findByRole("heading", {
+      name: "Flights · Amadeus",
+    });
+    const connectorCard = heading.closest(".watch-card") as HTMLElement;
+
+    expect(connectorCard.querySelector(".credential-guide")).toBeNull();
+    expect(within(connectorCard).queryByLabelText("Client ID")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".credential-guide")).toHaveLength(1);
+  });
+
+  it("does not duplicate a booking guide when a shared profile hides direct fields", async () => {
+    const bookingProvider = buildProvider({
+      key: "booking",
+      name: "Booking",
+      category: "booking",
+      supportsSharedProfile: true,
+      compatibleProfileProviderKeys: ["duffel", "amadeus", "kiwi"],
+      credentialProfileId: "profile-duffel",
+      credentialFields: [
+        { key: "provider", label: "Provider", sensitive: false },
+        { key: "access_token", label: "Duffel access token", sensitive: true },
+      ],
+    });
+    const duffelTemplate = buildProvider({
+      key: "flights_duffel",
+      name: "Flights · Duffel",
+      category: "flights",
+      providerKey: "duffel",
+      supportsSharedProfile: true,
+      compatibleProfileProviderKeys: ["duffel"],
+      credentialFields: [
+        { key: "access_token", label: "Duffel access token", sensitive: true },
+      ],
+    });
+    renderCategory("booking", [bookingProvider, duffelTemplate], [
+      {
+        id: "profile-duffel",
+        providerKey: "duffel",
+        label: "Duffel profile",
+        credentialsMasked: {},
+        usageIntegrationKeys: ["booking"],
+      },
+    ]);
+
+    const heading = await screen.findByRole("heading", { name: "Booking" });
+    const connectorCard = heading.closest(".watch-card") as HTMLElement;
+
+    expect(connectorCard.querySelector(".credential-guide")).toBeNull();
+    expect(
+      within(connectorCard).queryByLabelText("Duffel access token"),
+    ).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".credential-guide")).toHaveLength(1);
+  });
 });

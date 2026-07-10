@@ -84,8 +84,16 @@ describe("travelWatchApi booking execution", () => {
           feature_flags: {},
           feature_flag_definitions: [],
           guide: {
-            signup_url: "https://developers.amadeus.com/quick-start",
-            application_url: "https://developers.amadeus.com/production",
+            links: [
+              {
+                label: "Amadeus quick start",
+                url: "https://developers.amadeus.com/quick-start",
+              },
+              {
+                label: "Amadeus production access guide",
+                url: "https://developers.amadeus.com/production",
+              },
+            ],
             account_requirements: ["Developer account"],
             steps: ["Create an app", "Copy the test credentials"],
             environment_notes: ["Use test credentials first"],
@@ -106,8 +114,16 @@ describe("travelWatchApi booking execution", () => {
     const integrations = await travelWatchApi.getIntegrations();
 
     expect(integrations.providers[0].guide).toEqual({
-      signupUrl: "https://developers.amadeus.com/quick-start",
-      applicationUrl: "https://developers.amadeus.com/production",
+      links: [
+        {
+          label: "Amadeus quick start",
+          url: "https://developers.amadeus.com/quick-start",
+        },
+        {
+          label: "Amadeus production access guide",
+          url: "https://developers.amadeus.com/production",
+        },
+      ],
       accountRequirements: ["Developer account"],
       steps: ["Create an app", "Copy the test credentials"],
       environmentNotes: ["Use test credentials first"],

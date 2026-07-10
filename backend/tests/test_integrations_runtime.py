@@ -159,11 +159,14 @@ def test_every_catalog_entry_has_a_complete_frozen_acquisition_guide() -> None:
     for entry in entries:
         guide = entry.guide
         assert guide is not None, entry.key
-        assert guide.signup_url.startswith("https://"), entry.key
+        assert guide.links, entry.key
         assert guide.account_requirements, entry.key
         assert guide.steps, entry.key
         assert guide.environment_notes, entry.key
         assert guide.enables, entry.key
+        for link in guide.links:
+            assert link.label.strip(), entry.key
+            assert link.url.startswith("https://"), entry.key
         for values in (
             guide.account_requirements,
             guide.steps,
@@ -174,31 +177,80 @@ def test_every_catalog_entry_has_a_complete_frozen_acquisition_guide() -> None:
             assert all(value.strip() for value in values), entry.key
 
     with pytest.raises(FrozenInstanceError):
-        get_catalog_entry("flights_amadeus").guide.signup_url = "https://example.com"
+        get_catalog_entry("flights_amadeus").guide.links[0].label = "Changed"
 
 
 def test_catalog_acquisition_guides_use_official_provider_links() -> None:
-    expected_urls = {
+    expected_links = {
         "flights_amadeus": (
-            "https://developers.amadeus.com/self-service/apis-docs/guides/"
-            "developer-guides/quick-start/"
+            (
+                "Amadeus quick start",
+                "https://developers.amadeus.com/self-service/apis-docs/guides/"
+                "developer-guides/quick-start/",
+            ),
+            (
+                "Amadeus production access guide",
+                "https://developers.amadeus.com/self-service/apis-docs/guides/"
+                "developer-guides/API-Keys/moving-to-production/",
+            ),
         ),
-        "flights_duffel": "https://duffel.com/docs/api/overview/making-requests",
-        "flights_kiwi": "https://tequila.kiwi.com/",
-        "hotels": "https://developer.hotelbeds.com/documentation/getting-started/",
-        "notifications": "https://core.telegram.org/bots/tutorial",
-        "calendar": "https://developers.google.com/workspace/calendar/api/quickstart/python",
+        "flights_duffel": (
+            (
+                "Duffel API authentication guide",
+                "https://duffel.com/docs/api/overview/making-requests",
+            ),
+            (
+                "Duffel flights getting started",
+                "https://duffel.com/docs/guides/getting-started-with-flights",
+            ),
+        ),
+        "flights_kiwi": (
+            (
+                "Kiwi invitation-only partnership announcement",
+                "https://media.kiwi.com/articles-and-interviews/"
+                "better-for-business-kiwi-com-takes-a-new-approach-to-partnerships/",
+            ),
+            ("Kiwi Tequila portal", "https://tequila.kiwi.com/"),
+        ),
+        "hotels": (
+            (
+                "Hotelbeds getting started",
+                "https://developer.hotelbeds.com/documentation/getting-started/",
+            ),
+            ("Booking.com Demand API", "https://developers.booking.com/demand"),
+        ),
+        "booking": (
+            (
+                "Duffel flights getting started",
+                "https://duffel.com/docs/guides/getting-started-with-flights",
+            ),
+            (
+                "Amadeus quick start",
+                "https://developers.amadeus.com/self-service/apis-docs/guides/"
+                "developer-guides/quick-start/",
+            ),
+            (
+                "Kiwi invitation-only partnership announcement",
+                "https://media.kiwi.com/articles-and-interviews/"
+                "better-for-business-kiwi-com-takes-a-new-approach-to-partnerships/",
+            ),
+        ),
+        "notifications": (
+            ("Telegram BotFather tutorial", "https://core.telegram.org/bots/tutorial"),
+        ),
+        "calendar": (
+            (
+                "Google Calendar create events guide",
+                "https://developers.google.com/workspace/calendar/api/guides/create-events",
+            ),
+        ),
     }
 
-    for key, signup_url in expected_urls.items():
-        assert get_catalog_entry(key).guide.signup_url == signup_url
-
-    hotels_guide = get_catalog_entry("hotels").guide
-    assert hotels_guide.application_url == "https://developers.booking.com/demand"
-    assert "one credential" in " ".join(hotels_guide.steps).lower()
+    for key, links in expected_links.items():
+        guide = get_catalog_entry(key).guide
+        assert tuple((link.label, link.url) for link in guide.links) == links
 
     booking_guide = get_catalog_entry("booking").guide
-    assert booking_guide.application_url is not None
     assert "provider" in " ".join(booking_guide.steps).lower()
 
     notifications_guide = get_catalog_entry("notifications").guide
@@ -211,9 +263,47 @@ def test_catalog_acquisition_guides_use_official_provider_links() -> None:
     ).lower()
     assert "mailpit" in notification_copy
     assert "smtp provider" in notification_copy
+    assert "smtp and telegram can send externally" in notification_copy
 
-    kiwi_copy = " ".join(get_catalog_entry("flights_kiwi").guide.steps).lower()
-    assert "approval" in kiwi_copy
+    kiwi_guide = get_catalog_entry("flights_kiwi").guide
+    kiwi_copy = " ".join((*kiwi_guide.steps, *kiwi_guide.environment_notes)).lower()
+    assert "invitation only" in kiwi_copy
+    assert "self-service" not in kiwi_copy
+
+    hotels_guide = get_catalog_entry("hotels").guide
+    hotel_copy = " ".join(
+        (
+            *hotels_guide.account_requirements,
+            *hotels_guide.steps,
+            *hotels_guide.environment_notes,
+        )
+    ).lower()
+    assert "api key" in hotel_copy
+    assert "secret" in hotel_copy
+    assert "x-signature" in hotel_copy
+
+    calendar_guide = get_catalog_entry("calendar").guide
+    calendar_copy = " ".join(
+        (
+            *calendar_guide.account_requirements,
+            *calendar_guide.steps,
+            *calendar_guide.environment_notes,
+            *calendar_guide.enables,
+        )
+    )
+    assert "https://www.googleapis.com/auth/calendar" in calendar_copy
+    assert "create and delete live events" in calendar_copy.lower()
+
+    all_guide_copy = " ".join(
+        text
+        for entry in list_catalog_entries()
+        for text in (
+            *entry.guide.steps,
+            *entry.guide.environment_notes,
+            *entry.guide.enables,
+        )
+    ).lower()
+    assert "credential validation" not in all_guide_copy
 
 
 def test_every_resolved_acquisition_guide_serializes_for_the_admin_api() -> None:
@@ -228,8 +318,9 @@ def test_every_resolved_acquisition_guide_serializes_for_the_admin_api() -> None
             mode="json"
         )
 
-        assert payload["guide"]["signup_url"] == entry.guide.signup_url
-        assert payload["guide"]["application_url"] == entry.guide.application_url
+        assert payload["guide"]["links"] == [
+            {"label": link.label, "url": link.url} for link in entry.guide.links
+        ]
         assert payload["guide"]["account_requirements"] == list(
             entry.guide.account_requirements
         )
@@ -238,6 +329,110 @@ def test_every_resolved_acquisition_guide_serializes_for_the_admin_api() -> None
             entry.guide.environment_notes
         )
         assert payload["guide"]["enables"] == list(entry.guide.enables)
+
+
+@pytest.mark.parametrize(
+    ("provider", "credentials"),
+    (
+        ("duffel", {"provider": "duffel", "access_token": "duffel_test_token"}),
+        (
+            "amadeus",
+            {
+                "provider": "amadeus",
+                "client_id": "amadeus-key",
+                "client_secret": "amadeus-secret",
+            },
+        ),
+        ("kiwi", {"provider": "kiwi", "api_key": "kiwi-key"}),
+    ),
+)
+def test_booking_direct_credentials_accept_provider_specific_shapes(
+    provider: str,
+    credentials: dict[str, str],
+) -> None:
+    integrations_service._validate_credentials("booking", credentials)
+
+
+@pytest.mark.parametrize(
+    ("provider", "credentials", "missing_field"),
+    (
+        ("duffel", {"provider": "duffel"}, "access_token"),
+        (
+            "amadeus",
+            {"provider": "amadeus", "client_id": "amadeus-key"},
+            "client_secret",
+        ),
+        ("kiwi", {"provider": "kiwi"}, "api_key"),
+    ),
+)
+def test_booking_direct_credentials_reject_incomplete_provider_shapes(
+    provider: str,
+    credentials: dict[str, str],
+    missing_field: str,
+) -> None:
+    with pytest.raises(ValueError, match=missing_field):
+        integrations_service._validate_credentials("booking", credentials)
+
+
+def test_booking_requires_a_supported_direct_provider_or_matching_profile() -> None:
+    with pytest.raises(ValueError, match="provider or a matching shared credential profile"):
+        integrations_service._validate_credentials("booking", {})
+
+    with pytest.raises(ValueError, match="duffel, amadeus, or kiwi"):
+        integrations_service._validate_credentials(
+            "booking",
+            {"provider": "custom", "access_token": "token"},
+        )
+
+    integrations_service._validate_credentials(
+        "booking",
+        {"access_token": "profile-token"},
+        profile_provider_key="duffel",
+    )
+
+
+def test_hotelbeds_credentials_require_api_key_and_secret() -> None:
+    integrations_service._validate_credentials(
+        "hotels",
+        {
+            "provider": "hotelbeds",
+            "api_key": "hotelbeds-key",
+            "api_secret": "hotelbeds-secret",
+        },
+    )
+
+    with pytest.raises(ValueError, match="api_secret"):
+        integrations_service._validate_credentials(
+            "hotels",
+            {"provider": "hotelbeds", "api_key": "hotelbeds-key"},
+        )
+
+    fields = {field.key: field for field in get_catalog_entry("hotels").credential_fields}
+    assert {"provider", "api_key", "api_secret"} <= fields.keys()
+    assert "X-Signature" in fields["api_secret"].help_text
+
+
+def test_local_connection_test_reports_configuration_shape_not_network_validation() -> None:
+    valid_config = _resolved_config("flights_amadeus")
+    valid_config.credentials = {
+        "client_id": "amadeus-key",
+        "client_secret": "amadeus-secret",
+    }
+    valid_result = LocalFlightConnector(config=valid_config).test_connection()
+
+    assert valid_result.ok is True
+    assert "local configuration check passed" in valid_result.message.lower()
+    assert "no provider network request" in valid_result.message.lower()
+    assert valid_result.detail["check_type"] == "local_presence_and_shape"
+    assert valid_result.detail["network_request_made"] is False
+    assert "simulated" not in valid_result.detail
+
+    invalid_config = _resolved_config("flights_amadeus")
+    invalid_config.credentials = {"client_id": "amadeus-key"}
+    invalid_result = LocalFlightConnector(config=invalid_config).test_connection()
+
+    assert invalid_result.ok is False
+    assert invalid_result.detail["missing_fields"] == ["client_secret"]
 
 
 def test_resolve_integration_state_prefers_stored_credentials(

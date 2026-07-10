@@ -16,9 +16,13 @@ class AdminIntegrationUpdateRequest(BaseModel):
     credential_profile_id: str | None = None
 
 
+class AdminIntegrationAcquisitionLinkResponse(BaseModel):
+    label: str
+    url: str
+
+
 class AdminIntegrationAcquisitionGuideResponse(BaseModel):
-    signup_url: str
-    application_url: str | None = None
+    links: list[AdminIntegrationAcquisitionLinkResponse]
     account_requirements: list[str]
     steps: list[str]
     environment_notes: list[str]

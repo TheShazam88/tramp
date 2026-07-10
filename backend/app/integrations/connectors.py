@@ -32,31 +32,94 @@ FLIGHT_SOURCE_BY_INTEGRATION_KEY = {
 }
 
 
+def _local_shape_requirements(
+    config: ResolvedIntegrationConfig,
+) -> tuple[tuple[str, ...], str | None]:
+    if config.key == "flights_amadeus":
+        return ("client_id", "client_secret"), None
+    if config.key == "flights_duffel":
+        return ("access_token",), None
+    if config.key == "flights_kiwi":
+        return ("api_key",), None
+    if config.key == "hotels":
+        provider = str(config.credentials.get("provider") or "").strip().lower()
+        if provider == "hotelbeds":
+            return ("provider", "api_key", "api_secret"), None
+        if provider:
+            return (), f"No credential shape is implemented for hotel provider '{provider}'."
+        return ("provider",), None
+    if config.key == "booking":
+        provider = str(config.credentials.get("provider") or "").strip().lower()
+        if not provider and config.credential_profile_id:
+            if "access_token" in config.credentials:
+                provider = "duffel"
+            elif "client_id" in config.credentials or "client_secret" in config.credentials:
+                provider = "amadeus"
+            elif "api_key" in config.credentials:
+                provider = "kiwi"
+        required_by_provider = {
+            "duffel": ("access_token",),
+            "amadeus": ("client_id", "client_secret"),
+            "kiwi": ("api_key",),
+        }
+        if provider in required_by_provider:
+            return required_by_provider[provider], None
+        if provider:
+            return (), f"No credential shape is implemented for booking provider '{provider}'."
+        return ("provider",), None
+    if config.key == "notifications":
+        mode = str(config.credentials.get("delivery_mode") or "log_only").strip().lower()
+        if mode == "log_only":
+            return (), None
+        if mode == "smtp_dev":
+            return ("smtp_host", "smtp_from_address"), None
+        if mode == "telegram_bot":
+            return ("telegram_bot_token",), None
+        return (), f"Unknown notification delivery mode '{mode}'."
+    if config.key == "calendar":
+        return (), None
+    return (), None
+
+
 def _build_test_result(
     *,
     config: ResolvedIntegrationConfig,
     capability: str,
 ) -> ConnectionTestResult:
     warnings: list[str] = []
+    required_fields, shape_error = _local_shape_requirements(config)
+    missing_fields = [
+        field
+        for field in required_fields
+        if not str(config.credentials.get(field) or "").strip()
+    ]
+    ok = not missing_fields and shape_error is None
     if config.environment == IntegrationEnvironment.LIVE:
         warnings.append(
-            "Live mode is selected, but runtime still uses a safe local/test connector in v1."
+            "Live mode is selected, but this check does not prove provider network operation."
         )
-    if not config.credentials:
-        warnings.append(
-            "No provider credentials are configured; the safe local connector remains usable."
-        )
+    if missing_fields:
+        warnings.append(f"Missing required configuration: {', '.join(missing_fields)}.")
+    if shape_error:
+        warnings.append(shape_error)
     return ConnectionTestResult(
-        ok=True,
+        ok=ok,
         connector=config.runtime_connector,
-        message=f"{capability} connector is ready for safe local/test execution.",
+        message=(
+            f"{capability} local configuration check "
+            f"{'passed' if ok else 'needs attention'}. "
+            "No provider network request was made."
+        ),
         detail={
             "integration_key": config.key,
             "environment": config.environment.value,
             "credential_source": config.credential_source,
             "credential_keys": sorted(config.credentials.keys()),
             "feature_flags": config.feature_flags,
-            "simulated": True,
+            "check_type": "local_presence_and_shape",
+            "missing_fields": missing_fields,
+            "shape_error": shape_error,
+            "network_request_made": False,
         },
         warnings=warnings,
         checked_at=datetime.now(UTC),

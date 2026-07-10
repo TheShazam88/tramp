@@ -14,10 +14,15 @@ from app.db.models import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class IntegrationAcquisitionLink:
+    label: str
+    url: str
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class IntegrationAcquisitionGuide:
-    signup_url: str
-    application_url: str | None = None
+    links: tuple[IntegrationAcquisitionLink, ...]
     account_requirements: tuple[str, ...]
     steps: tuple[str, ...]
     environment_notes: tuple[str, ...]
