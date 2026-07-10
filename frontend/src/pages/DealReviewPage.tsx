@@ -26,7 +26,9 @@ import type {
   BookingAttemptReconciliation,
   DealApprovalResult,
   DealData,
+  ProfileWorkspace,
 } from "@/api/types";
+import { TrampStampButterfly } from "@/components/rewards/TrampStampButterfly";
 import {
   Badge,
   Button,
@@ -102,6 +104,7 @@ export function DealReviewPage() {
   const [masterKeyPassphrase, setMasterKeyPassphrase] = useState("");
   const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
   const [bookingFeedback, setBookingFeedback] = useState<BookingFeedback | null>(null);
+  const [stampAward, setStampAward] = useState<{ balance: number } | null>(null);
   const [bookingAttemptPending, setBookingAttemptPending] = useState(false);
   const [attemptAllowsRetry, setAttemptAllowsRetry] = useState(false);
   const [attemptReconciliationPending, setAttemptReconciliationPending] = useState(
@@ -207,6 +210,16 @@ export function DealReviewPage() {
 
   const completeBookingSuccess = useCallback(
     async (result: DealApprovalResult) => {
+      const syncProfileStampBalance = () => {
+        queryClient.setQueryData<ProfileWorkspace>(queryKeys.profile, (current) =>
+          current
+            ? {
+                ...current,
+                trampStampBalance: result.trampStampBalance,
+              }
+            : current,
+        );
+      };
       const bookingDetails = [
         result.confirmationNote,
         result.provider ? `Provider: ${result.provider}.` : "",
@@ -216,6 +229,10 @@ export function DealReviewPage() {
           : "",
       ].filter(Boolean);
       clearLogicalAttempt();
+      syncProfileStampBalance();
+      if (result.trampStampsAwarded === 1) {
+        setStampAward({ balance: result.trampStampBalance });
+      }
 
       if (approvalTokenFromLink) {
         await queryClient.cancelQueries({ queryKey: approvalTokenQueryKey, exact: true });
@@ -235,6 +252,7 @@ export function DealReviewPage() {
         queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
         queryClient.invalidateQueries({ queryKey: queryKeys.profile }),
       ]);
+      syncProfileStampBalance();
       if (mountedRef.current) {
         setBookingFeedback({ kind: "success", message: bookingDetails.join(" ") });
         setShowApprovalForm(false);
@@ -609,10 +627,18 @@ export function DealReviewPage() {
       </Button>
     </div>
   ) : null;
+  const stampButterfly = (
+    <TrampStampButterfly
+      active={stampAward !== null}
+      balance={stampAward?.balance ?? profileWorkspace?.trampStampBalance ?? 0}
+      onComplete={() => setStampAward(null)}
+    />
+  );
 
   if (!data) {
     return (
       <div className="stack">
+        {stampButterfly}
         {navigationBlockNotice}
         {bookingFeedbackNotice}
         {recoveryActions}
@@ -785,6 +811,7 @@ export function DealReviewPage() {
 
   return (
     <div className="stack">
+      {stampButterfly}
       {navigationBlockNotice}
       {recoveryActions}
 

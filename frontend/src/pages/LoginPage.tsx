@@ -4,6 +4,7 @@ import { Navigate, useNavigate } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
+import { TrampBrand } from "@/components/brand/TrampBrand";
 import { Button, SectionHeading, Surface } from "@/components/ui/primitives";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -63,12 +64,7 @@ export function LoginPage() {
         <div className="login-stage">
           <Surface className="page-hero login-hero">
             <p className="login-kicker">Luxury travel command</p>
-            <div className="login-wordmark-wrap">
-              <div className="login-wordmark-shadow" aria-hidden="true">
-                TRAMP
-              </div>
-              <div className="login-wordmark">TRAMP</div>
-            </div>
+            <TrampBrand className="login-brand" />
             <SectionHeading
               eyebrow="Secure access"
               title="Sign in"

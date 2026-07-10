@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { saveStoredBookingAttempt } from "@/api/bookingAttempts";
 import { ApiError } from "@/api/client";
-import { travelWatchApi } from "@/api/travelWatchApi";
+import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
 import type {
   BookDealRequest,
   BookingAttemptReconciliation,
@@ -24,6 +24,12 @@ const approvalResult: DealApprovalResult = {
   provider: "Duffel",
   amount: "$640",
   confirmationNote: "Booking confirmed.",
+  trampStampsAwarded: 0,
+  trampStampBalance: 3,
+};
+
+const awardedApprovalResult: DealApprovalResult = {
+  ...approvalResult,
   trampStampsAwarded: 1,
   trampStampBalance: 4,
 };
@@ -67,6 +73,7 @@ const profileWorkspace: ProfileWorkspace = {
     telegramChatId: null,
     totpEnabled: true,
   },
+  trampStampBalance: 3,
   travelers: [],
   travelerGroups: [],
   travelerGroupOptions: [],
@@ -244,6 +251,41 @@ describe("DealReviewPage booking execution", () => {
     await screen.findByRole("status");
   });
 
+  it("triggers one stamp butterfly and updates the balance", async () => {
+    vi.mocked(travelWatchApi.bookDeal).mockResolvedValueOnce(awardedApprovalResult);
+    const { queryClient, user } = renderDealReview();
+    await openAndFillSecureForm(user);
+
+    await user.click(screen.getByRole("button", { name: "Book now" }));
+
+    expect(
+      await screen.findByRole("status", {
+        name: "One TRAMP-Stamp awarded. Balance: 4 TRAMP-Stamps.",
+      }),
+    ).toBeVisible();
+    expect(screen.getAllByText("+1 TRAMP-Stamp")).toHaveLength(1);
+    await waitFor(() => {
+      expect(
+        queryClient.getQueryData<ProfileWorkspace>(queryKeys.profile)?.trampStampBalance,
+      ).toBe(4);
+    });
+  });
+
+  it("does not trigger the butterfly for a replay that awards zero stamps", async () => {
+    vi.mocked(travelWatchApi.bookDeal).mockResolvedValueOnce({
+      ...approvalResult,
+      trampStampsAwarded: 0,
+      trampStampBalance: 4,
+    });
+    const { user } = renderDealReview();
+    await openAndFillSecureForm(user);
+
+    await user.click(screen.getByRole("button", { name: "Book now" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Booking confirmed.");
+    expect(screen.queryByText("+1 TRAMP-Stamp")).not.toBeInTheDocument();
+  });
+
   it("reuses a verified linked token, consumes its cache, and invalidates every deal variant", async () => {
     const { queryClient, user } = renderDealReview(
       "/deals/deal-1?watchId=watch-1&approvalToken=linked-token",
@@ -343,6 +385,7 @@ describe("DealReviewPage booking execution", () => {
     expect(alert).toHaveFocus();
     expect(screen.getByLabelText("Six-digit TOTP code")).toHaveValue("");
     expect(screen.getByLabelText("Master-key passphrase (optional)")).toHaveValue("");
+    expect(screen.queryByText("+1 TRAMP-Stamp")).not.toBeInTheDocument();
     expect(
       queryClient
         .getMutationCache()

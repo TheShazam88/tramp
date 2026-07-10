@@ -105,6 +105,7 @@ interface SignupStartResponseRaw {
 }
 
 interface ProfileSummaryRaw {
+  tramp_stamp_balance?: number | null;
   settings: {
     id: string;
     email: string;
@@ -1154,6 +1155,7 @@ function mapCurrentUser(raw: AuthResponseRaw["user"]): CurrentUser {
 function emptyWorkspace(currentUser: CurrentUser | null = null): ProfileWorkspace {
   return {
     currentUser,
+    trampStampBalance: 0,
     travelers: [],
     travelerGroups: [],
     travelerGroupOptions: [],
@@ -1266,6 +1268,7 @@ function mapProfile(raw: ProfileSummaryRaw): ProfileWorkspace {
       telegramChatId: raw.settings.telegram_chat_id,
       totpEnabled: raw.settings.totp_enabled,
     },
+    trampStampBalance: raw.tramp_stamp_balance ?? 0,
     travelers: raw.travelers.map(mapTravelerProfile),
     travelerGroups: raw.traveler_groups.map((group) => group.name),
     travelerGroupOptions: raw.traveler_groups.map((group) => ({

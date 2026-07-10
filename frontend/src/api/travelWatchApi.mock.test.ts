@@ -17,6 +17,7 @@ describe("travelWatchApi mock payment and booking isolation", () => {
     const { inspectMockBookingAttempts } = await import("@/api/mockBookingAttempts");
     const workspace = await travelWatchApi.getProfileWorkspace();
 
+    expect(workspace.trampStampBalance).toBe(0);
     expect(workspace.paymentMethods).toEqual([
       expect.objectContaining({
         id: expect.any(String),

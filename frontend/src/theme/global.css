@@ -42,6 +42,7 @@ a.button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 1rem;
 }
 
@@ -64,10 +65,12 @@ a.button {
   gap: 0.75rem;
 }
 
-.topbar-brand > div {
+.tramp-brand {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  align-items: flex-start;
+  gap: 0.18rem;
+  width: fit-content;
 }
 
 .app-logo {
@@ -80,17 +83,45 @@ a.button {
 
 .brand-wordmark {
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(2rem, 5vw, 2.9rem);
+  font-size: clamp(3.6rem, 12vw, 6.8rem);
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
+  line-height: 0.86;
   text-transform: uppercase;
-  color: #a46a16;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  color: var(--luxury);
+  background: linear-gradient(115deg, #8f5d16 5%, #c89a4c 38%, #f1d794 55%, #a66f20 88%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
-.brand-tagline {
-  margin: 0;
+.brand-expansion {
   color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: clamp(0.62rem, 2vw, 0.78rem);
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.tramp-brand-compact {
+  gap: 0.1rem;
+}
+
+.tramp-brand-compact .brand-wordmark {
+  font-size: clamp(2rem, 5vw, 2.75rem);
+}
+
+.tramp-brand-compact .brand-expansion {
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+}
+
+.topbar-actions {
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .page-frame {
@@ -131,36 +162,13 @@ a.button {
   font-family: var(--font-mono);
 }
 
-.login-wordmark-wrap {
-  position: relative;
-  display: grid;
-  place-items: center;
+.login-brand {
+  align-items: center;
   margin: 1rem 0 1.2rem;
 }
 
-.login-wordmark,
-.login-wordmark-shadow {
-  font-family: Georgia, "Times New Roman", serif;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  line-height: 0.9;
-  font-size: clamp(3.7rem, 13vw, 7rem);
-}
-
-.login-wordmark {
-  position: relative;
-  color: #b9852c;
-  text-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.9),
-    0 8px 22px rgba(185, 133, 44, 0.22);
-}
-
-.login-wordmark-shadow {
-  position: absolute;
-  transform: translate(0.08em, 0.1em);
-  color: rgba(31, 30, 27, 0.08);
-  pointer-events: none;
+.login-brand .brand-wordmark {
+  filter: drop-shadow(0 8px 15px rgba(185, 138, 75, 0.2));
 }
 
 .login-form-card {
@@ -319,6 +327,209 @@ a.button {
 .badge-muted {
   background: var(--canvas);
   color: var(--muted);
+}
+
+.tramp-stamp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-height: 2.45rem;
+  padding: 0.28rem 0.72rem 0.28rem 0.4rem;
+  border: 1px solid color-mix(in srgb, var(--luxury) 52%, var(--line));
+  border-radius: var(--radius-pill);
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.92), transparent 38%),
+    linear-gradient(135deg, var(--luxury-tint), rgba(255, 255, 255, 0.96));
+  color: color-mix(in srgb, var(--luxury) 78%, var(--ink));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 6px 18px rgba(166, 111, 32, 0.1);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.tramp-stamp-badge-mark {
+  width: 2rem;
+  height: 1.9rem;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.tramp-stamp-overlay {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.tramp-stamp-flight {
+  display: grid;
+  justify-items: center;
+  width: min(92vw, 29rem);
+  animation: trampStampDescent 5s cubic-bezier(0.22, 0.75, 0.24, 1) both;
+  will-change: transform, opacity;
+}
+
+.tramp-stamp-butterfly {
+  width: min(86vw, 24rem);
+  height: auto;
+  overflow: visible;
+  filter: drop-shadow(0 18px 24px rgba(8, 46, 93, 0.24));
+}
+
+.tramp-stamp-wing {
+  transform-box: view-box;
+  animation: trampStampWingBeat 5s ease-in-out both;
+  will-change: transform;
+}
+
+.tramp-stamp-wing-left {
+  transform-origin: 158px 150px;
+}
+
+.tramp-stamp-wing-right {
+  transform-origin: 162px 150px;
+}
+
+.tramp-stamp-body {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: trampStampBodySettle 5s ease-in-out both;
+}
+
+.tramp-stamp-award-copy {
+  display: grid;
+  justify-items: center;
+  gap: 0.24rem;
+  min-width: min(88vw, 19rem);
+  margin-top: -0.3rem;
+  padding: 0.82rem 1.2rem;
+  border: 1px solid color-mix(in srgb, var(--luxury) 58%, var(--line));
+  border-radius: var(--radius-pill);
+  background: rgba(255, 253, 247, 0.94);
+  color: var(--ink);
+  box-shadow: var(--shadow-soft);
+  text-align: center;
+  animation: trampStampCopyReveal 5s ease both;
+  backdrop-filter: blur(10px);
+}
+
+.tramp-stamp-award-copy strong {
+  color: color-mix(in srgb, var(--luxury) 78%, var(--ink));
+  font-family: var(--font-display);
+  font-size: clamp(1.2rem, 5vw, 1.65rem);
+  letter-spacing: 0.02em;
+}
+
+.tramp-stamp-award-copy span {
+  color: var(--value-dark);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@keyframes trampStampDescent {
+  0% {
+    opacity: 0;
+    transform: translateY(-52vh) scale(0.76);
+  }
+  5% {
+    opacity: 1;
+  }
+  39% {
+    opacity: 1;
+    transform: translateY(-4vh) scale(0.98);
+  }
+  46% {
+    transform: translateY(1.5vh) scale(1.01);
+  }
+  52%,
+  88% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes trampStampWingBeat {
+  0%,
+  8%,
+  16%,
+  25%,
+  48%,
+  56%,
+  64%,
+  100% {
+    transform: scaleX(1);
+  }
+  4%,
+  12%,
+  21% {
+    transform: scaleX(0.24);
+  }
+  52% {
+    transform: scaleX(0.68);
+  }
+  60% {
+    transform: scaleX(0.78);
+  }
+}
+
+@keyframes trampStampBodySettle {
+  0%,
+  39% {
+    transform: rotate(-2deg);
+  }
+  46% {
+    transform: rotate(2deg);
+  }
+  54%,
+  100% {
+    transform: rotate(0);
+  }
+}
+
+@keyframes trampStampCopyReveal {
+  0%,
+  54% {
+    opacity: 0;
+    transform: translateY(0.8rem) scale(0.96);
+  }
+  62%,
+  88% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.tramp-stamp-flight-reduced {
+  opacity: 1;
+  transform: none;
+  animation: none;
+}
+
+.tramp-stamp-flight-reduced .tramp-stamp-wing,
+.tramp-stamp-flight-reduced .tramp-stamp-body,
+.tramp-stamp-flight-reduced .tramp-stamp-award-copy {
+  opacity: 1;
+  transform: none;
+  animation: none;
 }
 
 .stat-grid {
@@ -1081,6 +1292,45 @@ a.button {
 .bottom-link-active {
   background: var(--value-tint);
   color: var(--value-dark);
+}
+
+@media (max-width: 719px) {
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .topbar-brand,
+  .topbar-actions {
+    width: 100%;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+
+  .tramp-stamp-badge {
+    min-height: 2.3rem;
+    font-size: 0.64rem;
+  }
+
+  .tramp-stamp-butterfly {
+    width: min(92vw, 21rem);
+  }
+
+  .tramp-stamp-award-copy {
+    min-width: min(90vw, 17rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tramp-stamp-flight,
+  .tramp-stamp-wing,
+  .tramp-stamp-body,
+  .tramp-stamp-award-copy {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
 }
 
 @media (min-width: 720px) {

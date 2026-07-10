@@ -359,6 +359,7 @@ export interface TripTemplateProfile {
 
 export interface ProfileWorkspace {
   currentUser: CurrentUser | null;
+  trampStampBalance: number;
   travelers: TravelerProfile[];
   travelerGroups: string[];
   travelerGroupOptions: Array<{

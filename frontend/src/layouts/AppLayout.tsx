@@ -3,6 +3,8 @@ import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react
 
 import { apiClient } from "@/api/client";
 import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
+import { TrampBrand } from "@/components/brand/TrampBrand";
+import { TrampStampBadge } from "@/components/rewards/TrampStampButterfly";
 import { Button } from "@/components/ui/primitives";
 
 const navigation = [
@@ -55,14 +57,10 @@ export function AppLayout() {
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-brand">
-          <img className="app-logo" src="/tramp-app-icon.svg" alt="TRAMP" />
-          <div>
-            <p className="eyebrow">Autonomous travel booking</p>
-            <h1 className="brand-wordmark">TRAMP</h1>
-            <p className="brand-tagline">{isOnboarding ? "Security and onboarding" : "Operator console"}</p>
-          </div>
+          <TrampBrand compact />
         </div>
-        <div className="button-row">
+        <div className="button-row topbar-actions">
+          <TrampStampBadge balance={data.trampStampBalance} />
           {needsTotpSetup ? (
             <Button variant="secondary" to="/setup/2fa">
               Enable 2FA

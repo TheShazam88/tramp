@@ -8,6 +8,67 @@ describe("travelWatchApi booking execution", () => {
     vi.restoreAllMocks();
   });
 
+  it("maps the top-level profile stamp balance", async () => {
+    const get = vi.spyOn(apiClient, "get").mockImplementation(async (path) => {
+      if (path === "/auth/me") {
+        return {
+          user: {
+            id: "user-1",
+            email: "traveler@example.com",
+            role: "user",
+            onboarding_completed: true,
+            default_notify_channel: "email",
+            telegram_chat_id: null,
+            totp_enabled: true,
+          },
+        } as never;
+      }
+      if (path === "/profile") {
+        return {
+          settings: {
+            id: "user-1",
+            email: "traveler@example.com",
+            role: "user",
+            onboarding_completed: true,
+            default_notify_channel: "email",
+            telegram_chat_id: null,
+            totp_enabled: true,
+          },
+          preferences: {
+            home_airports: [],
+            default_cabin: "business",
+            default_luxury_vs_savings: 0.5,
+            preferred_alliances: [],
+            preferred_airlines: [],
+            avoided_airlines: [],
+            preferred_hotel_brands: [],
+            avoided_hotel_brands: [],
+            quiet_hours_start: null,
+            quiet_hours_end: null,
+            default_notify_channel: "email",
+            avoid_redeye: false,
+            prefer_refundable: true,
+            seat_auto_select: false,
+            default_hotel_min_rating: null,
+            default_max_layover_minutes: null,
+            default_min_connection_minutes: null,
+          },
+          travelers: [],
+          traveler_groups: [],
+          payment_methods: [],
+          trip_templates: [],
+          tramp_stamp_balance: 7,
+        } as never;
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+
+    const workspace = await travelWatchApi.getProfileWorkspace();
+
+    expect(get).toHaveBeenCalledWith("/profile");
+    expect(workspace.trampStampBalance).toBe(7);
+  });
+
   it("posts the caller-owned approval token and idempotency key unchanged", async () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({
       id: "booking-1",
