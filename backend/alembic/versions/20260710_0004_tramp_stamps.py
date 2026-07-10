@@ -14,6 +14,31 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Early 0003 databases stored enum member names, while the current ORM stores values.
+    # Rebuild these two types so existing rows remain readable without retaining aliases.
+    op.execute(
+        "ALTER TABLE notification_deliveries "
+        "ALTER COLUMN transport TYPE text USING transport::text, "
+        "ALTER COLUMN status TYPE text USING status::text"
+    )
+    op.execute("DROP TYPE notification_transport")
+    op.execute("DROP TYPE notification_delivery_status")
+    op.execute(
+        "CREATE TYPE notification_transport AS ENUM "
+        "('log_only', 'smtp_dev', 'telegram_bot')"
+    )
+    op.execute(
+        "CREATE TYPE notification_delivery_status AS ENUM "
+        "('pending', 'sent', 'failed')"
+    )
+    op.execute(
+        "ALTER TABLE notification_deliveries "
+        "ALTER COLUMN transport TYPE notification_transport "
+        "USING lower(transport)::notification_transport, "
+        "ALTER COLUMN status TYPE notification_delivery_status "
+        "USING lower(status)::notification_delivery_status"
+    )
+
     op.create_table(
         "tramp_stamp_ledger",
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),

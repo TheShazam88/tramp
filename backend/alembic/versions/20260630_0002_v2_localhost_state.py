@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "20260630_0002"
 down_revision = "20260629_0001"
@@ -13,20 +14,23 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("ALTER TYPE integration_environment ADD VALUE IF NOT EXISTS 'off'")
+    op.execute(
+        "ALTER TYPE integration_environment "
+        "ADD VALUE IF NOT EXISTS 'OFF' BEFORE 'TEST'"
+    )
 
     booking_attempt_status_type = sa.Enum(
-        "started",
-        "revalidated",
-        "booked",
-        "failed",
+        "STARTED",
+        "REVALIDATED",
+        "BOOKED",
+        "FAILED",
         name="booking_attempt_status",
     )
     booking_attempt_status = postgresql.ENUM(
-        "started",
-        "revalidated",
-        "booked",
-        "failed",
+        "STARTED",
+        "REVALIDATED",
+        "BOOKED",
+        "FAILED",
         name="booking_attempt_status",
         create_type=False,
     )
@@ -57,30 +61,30 @@ def upgrade() -> None:
         create_type=False,
     )
     disruption_type_type = sa.Enum(
-        "schedule_change",
-        "cancellation",
-        "better_deal",
-        "manual_test",
+        "SCHEDULE_CHANGE",
+        "CANCELLATION",
+        "BETTER_DEAL",
+        "MANUAL_TEST",
         name="disruption_type",
     )
     disruption_type = postgresql.ENUM(
-        "schedule_change",
-        "cancellation",
-        "better_deal",
-        "manual_test",
+        "SCHEDULE_CHANGE",
+        "CANCELLATION",
+        "BETTER_DEAL",
+        "MANUAL_TEST",
         name="disruption_type",
         create_type=False,
     )
     disruption_status_type = sa.Enum(
-        "new",
-        "notified",
-        "resolved",
+        "NEW",
+        "NOTIFIED",
+        "RESOLVED",
         name="disruption_status",
     )
     disruption_status = postgresql.ENUM(
-        "new",
-        "notified",
-        "resolved",
+        "NEW",
+        "NOTIFIED",
+        "RESOLVED",
         name="disruption_status",
         create_type=False,
     )
@@ -92,7 +96,10 @@ def upgrade() -> None:
     disruption_type_type.create(bind, checkfirst=True)
     disruption_status_type.create(bind, checkfirst=True)
 
-    op.add_column("bookings", sa.Column("provider_correlation_id", sa.String(length=255), nullable=True))
+    op.add_column(
+        "bookings",
+        sa.Column("provider_correlation_id", sa.String(length=255), nullable=True),
+    )
     op.add_column("bookings", sa.Column("ticketing_state", sa.String(length=64), nullable=True))
     op.add_column("bookings", sa.Column("calendar_detail", sa.Text(), nullable=True))
 
@@ -159,8 +166,16 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["deal_id"], ["deals.id"], ondelete="SET NULL"),
     )
     op.create_index("ix_notification_deliveries_user_id", "notification_deliveries", ["user_id"])
-    op.create_index("ix_notification_deliveries_booking_id", "notification_deliveries", ["booking_id"])
-    op.create_index("ix_notification_deliveries_disruption_id", "notification_deliveries", ["disruption_id"])
+    op.create_index(
+        "ix_notification_deliveries_booking_id",
+        "notification_deliveries",
+        ["booking_id"],
+    )
+    op.create_index(
+        "ix_notification_deliveries_disruption_id",
+        "notification_deliveries",
+        ["disruption_id"],
+    )
     op.create_index("ix_notification_deliveries_deal_id", "notification_deliveries", ["deal_id"])
 
 

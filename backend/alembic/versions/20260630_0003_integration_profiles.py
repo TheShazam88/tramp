@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "20260630_0003"
 down_revision = "20260630_0002"
@@ -21,7 +22,7 @@ def upgrade() -> None:
         sa.Column("updated_by", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column(
             "updated_at",
-            sa.DateTime(timezone=True),
+            sa.DateTime(),
             nullable=False,
             server_default=sa.func.now(),
         ),
