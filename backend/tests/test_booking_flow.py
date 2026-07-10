@@ -98,7 +98,7 @@ class FakeBookingSession:
         entity = statement.column_descriptions[0].get("entity")
         if entity is Booking:
             self.booking_queries += 1
-            if self.booking_queries >= 3:
+            if self.booking_queries >= 4:
                 return next(
                     value for value in reversed(self.added) if isinstance(value, Booking)
                 )

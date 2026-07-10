@@ -305,6 +305,62 @@ def _patch_booking_runtime(
     monkeypatch.setattr(booking_service, "_enqueue_notification_tasks", lambda _items: None)
 
 
+def _complete_live_booking(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    label: str,
+) -> tuple[
+    User,
+    TripWatch,
+    Deal,
+    PaymentMethod,
+    StaticBookingConnector,
+    object,
+    str,
+]:
+    user, watch, deal, payment_method = _add_live_booking_request(
+        db,
+        label=label,
+    )
+    deal.confirm_token_hash = "consumable-token-hash"
+    db.commit()
+    connector = StaticBookingConnector(_provider_result(BookingStatus.TICKETED))
+    _patch_booking_runtime(monkeypatch, connector)
+    monkeypatch.setattr(booking_service, "queue_notification", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        booking_service,
+        "push_booking_to_calendar",
+        lambda **_kwargs: {"transport": "test"},
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "consume_approval_token",
+        lambda *, deal: setattr(deal, "confirm_token_hash", None),
+    )
+    idempotency_key = f"{label}-{uuid4()}"
+    response = booking_service.approve_and_book(
+        db=db,
+        user=user,
+        deal_id=deal.id,
+        approval_token="approval-token",
+        totp_code="000000",
+        master_key_passphrase="unused",
+        payment_method_id=payment_method.id,
+        idempotency_key=idempotency_key,
+        token_service=SimpleNamespace(),
+    )
+    return (
+        user,
+        watch,
+        deal,
+        payment_method,
+        connector,
+        response,
+        idempotency_key,
+    )
+
+
 def _approve_booking_in_session(
     engine: Engine,
     *,
@@ -429,6 +485,189 @@ def test_profile_summary_serializes_postgres_stamp_balance(db: Session) -> None:
 
     assert summary.tramp_stamp_balance == 1
     assert summary.model_dump()["tramp_stamp_balance"] == 1
+
+
+def test_lost_success_response_replays_before_consumed_token_validation(
+    db: Session,
+    postgres_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        user,
+        _watch,
+        deal,
+        payment_method,
+        connector,
+        first_response,
+        idempotency_key,
+    ) = _complete_live_booking(
+        db,
+        monkeypatch,
+        label="lost-success-response",
+    )
+    db.expire_all()
+    persisted_deal = db.get(Deal, deal.id)
+    assert persisted_deal is not None
+    assert persisted_deal.status == DealStatus.BOOKED
+    assert persisted_deal.confirm_token_hash is None
+
+    def unexpected_validation(*_args, **_kwargs):
+        raise AssertionError("Idempotent replay must precede first-attempt validation.")
+
+    monkeypatch.setattr(
+        booking_service,
+        "_get_owned_watch_for_deal",
+        unexpected_validation,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "get_booking_connector",
+        unexpected_validation,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "get_calendar_connector",
+        unexpected_validation,
+    )
+    monkeypatch.setattr(booking_service, "get_integration", unexpected_validation)
+    monkeypatch.setattr(
+        booking_service,
+        "_require_step_up_auth",
+        unexpected_validation,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "verify_approval_token",
+        unexpected_validation,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "_get_owned_payment_method_or_404",
+        unexpected_validation,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "_revalidate_deal_before_booking",
+        unexpected_validation,
+    )
+
+    with Session(postgres_engine, expire_on_commit=False) as replay_db:
+        replay_user = replay_db.get(User, user.id)
+        assert replay_user is not None
+        replay_response = booking_service.approve_and_book(
+            db=replay_db,
+            user=replay_user,
+            deal_id=deal.id,
+            approval_token="consumed-approval-token",
+            totp_code="invalid",
+            master_key_passphrase="invalid",
+            payment_method_id=payment_method.id,
+            idempotency_key=idempotency_key,
+            token_service=SimpleNamespace(),
+        )
+
+    assert connector.call_count == 1
+    assert replay_response.id == first_response.id
+    assert replay_response.idempotent_replay is True
+    assert replay_response.tramp_stamps_awarded == 0
+    assert replay_response.tramp_stamp_balance == first_response.tramp_stamp_balance == 1
+
+
+def test_idempotency_key_for_another_deal_is_not_replayed(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        user,
+        watch,
+        first_deal,
+        payment_method,
+        connector,
+        _first_response,
+        idempotency_key,
+    ) = _complete_live_booking(
+        db,
+        monkeypatch,
+        label="wrong-deal-replay",
+    )
+    second_deal = Deal(
+        id=uuid4(),
+        watch_id=watch.id,
+        kind="flight",
+        source="live-amadeus",
+        total_price=Decimal("700.00"),
+        currency="USD",
+        framing=DealFraming.BEST_VALUE,
+        fingerprint_hash=f"wrong-deal-{uuid4()}",
+        status=DealStatus.PROPOSED,
+    )
+    db.add(second_deal)
+    db.commit()
+
+    with pytest.raises(ConflictError) as exc_info:
+        booking_service.approve_and_book(
+            db=db,
+            user=user,
+            deal_id=second_deal.id,
+            approval_token="approval-token",
+            totp_code="000000",
+            master_key_passphrase="unused",
+            payment_method_id=payment_method.id,
+            idempotency_key=idempotency_key,
+            token_service=SimpleNamespace(),
+        )
+
+    message = str(exc_info.value)
+    assert connector.call_count == 1
+    assert str(first_deal.id) not in message
+    assert connector.result.provider_booking_ref not in message
+
+
+def test_idempotency_key_for_another_user_is_not_replayed(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        first_user,
+        _first_watch,
+        first_deal,
+        _first_payment_method,
+        connector,
+        first_response,
+        idempotency_key,
+    ) = _complete_live_booking(
+        db,
+        monkeypatch,
+        label="wrong-user-replay",
+    )
+    second_user, _second_watch, second_deal, second_payment_method = (
+        _add_live_booking_request(
+            db,
+            label="wrong-user-request",
+        )
+    )
+    db.commit()
+
+    with pytest.raises(ConflictError) as exc_info:
+        booking_service.approve_and_book(
+            db=db,
+            user=second_user,
+            deal_id=second_deal.id,
+            approval_token="approval-token",
+            totp_code="000000",
+            master_key_passphrase="unused",
+            payment_method_id=second_payment_method.id,
+            idempotency_key=idempotency_key,
+            token_service=SimpleNamespace(),
+        )
+
+    message = str(exc_info.value)
+    assert connector.call_count == 1
+    assert str(first_user.id) not in message
+    assert first_user.email not in message
+    assert str(first_deal.id) not in message
+    assert first_response.id not in message
+    assert connector.result.provider_booking_ref not in message
 
 
 def test_failed_provider_status_persists_only_failed_attempt(

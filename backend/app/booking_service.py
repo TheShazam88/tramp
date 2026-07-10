@@ -71,6 +71,20 @@ def approve_and_book(
 ) -> BookingResponse:
     mock_data_enabled = get_mock_data_enabled(db=db)
     deal = get_owned_deal_record(db=db, user=user, deal_id=deal_id)
+    existing_replay = _get_owned_booking_replay(
+        db=db,
+        user=user,
+        deal_id=deal.id,
+        idempotency_key=idempotency_key,
+    )
+    if existing_replay is not None:
+        return serialize_booking(
+            db=db,
+            user=user,
+            booking=existing_replay,
+            idempotent_replay=True,
+        )
+
     watch = _get_owned_watch_for_deal(db=db, user=user, deal=deal)
     booking_connector = get_booking_connector(db=db)
     calendar_connector = get_calendar_connector(db=db, allow_disabled=True)
@@ -765,6 +779,25 @@ def _get_owned_booking_or_404(*, db: Session, user: User, booking_id: UUID) -> B
     ):
         raise LookupError("Booking not found.")
     return booking
+
+
+def _get_owned_booking_replay(
+    *,
+    db: Session,
+    user: User,
+    deal_id: UUID,
+    idempotency_key: str,
+) -> Booking | None:
+    return db.scalar(
+        select(Booking)
+        .join(Deal, Deal.id == Booking.deal_id)
+        .join(TripWatch, TripWatch.id == Deal.watch_id)
+        .where(
+            Booking.idempotency_key == idempotency_key,
+            Booking.deal_id == deal_id,
+            TripWatch.user_id == user.id,
+        )
+    )
 
 
 def _booking_is_simulated(*, db: Session, booking: Booking) -> bool:
