@@ -18,8 +18,9 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from app import booking_service
+from app import booking_recovery_service, booking_service
 from app.api.routes.profile import _build_profile_summary
+from app.booking_recovery_service import BOOKING_RECOVERY_CONFIRMATION
 from app.db.models import (
     AutoBookMode,
     Booking,
@@ -1264,6 +1265,116 @@ def test_calendar_and_notification_use_preresolved_dependencies_after_claim(
         )
         assert late_integration is not None
         assert late_integration.credential_profile_id is None
+
+
+def test_admin_recovery_waits_for_booking_writer_without_deadlock_or_reopen(
+    db: Session,
+    postgres_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, _watch, deal, payment_method = _add_live_booking_request(
+        db,
+        label="recovery-writer-order",
+    )
+    admin = _add_user(db, label="recovery-writer-admin")
+    admin.role = UserRole.ADMIN
+    db.commit()
+    connector = StaticBookingConnector(
+        _provider_result(BookingStatus.TICKETED),
+        blocking=True,
+    )
+    _patch_booking_runtime(monkeypatch, connector)
+    monkeypatch.setattr(booking_service, "queue_notification", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        booking_service,
+        "push_booking_to_calendar",
+        lambda **_kwargs: {"transport": "test"},
+    )
+    idempotency_key = f"recovery-writer-order-{uuid4()}"
+    recovery_started = threading.Event()
+
+    def execute_booking() -> object:
+        return _approve_booking_in_session(
+            postgres_engine,
+            user_id=user.id,
+            deal_id=deal.id,
+            payment_method_id=payment_method.id,
+            idempotency_key=idempotency_key,
+        )
+
+    def execute_recovery() -> object:
+        with Session(postgres_engine, expire_on_commit=False) as recovery_db:
+            recovery_admin = recovery_db.get(User, admin.id)
+            assert recovery_admin is not None
+            recovery_started.set()
+            try:
+                return booking_recovery_service.recover_unresolved_booking_attempt(
+                    db=recovery_db,
+                    actor=recovery_admin,
+                    idempotency_key=idempotency_key,
+                    confirmation=BOOKING_RECOVERY_CONFIRMATION,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        booking_future = pool.submit(execute_booking)
+        assert connector.provider_started.wait(timeout=10)
+        recovery_future = pool.submit(execute_recovery)
+        assert recovery_started.wait(timeout=5)
+        assert recovery_future.done() is False
+
+        with Session(postgres_engine) as observer:
+            in_flight_attempt = observer.scalar(
+                select(BookingAttempt).where(
+                    BookingAttempt.idempotency_key == idempotency_key
+                )
+            )
+            assert in_flight_attempt is not None
+            assert in_flight_attempt.status == BookingAttemptStatus.REVALIDATED
+            assert in_flight_attempt.recovery_required is True
+            assert observer.get(Deal, deal.id).status == DealStatus.PROPOSED
+            assert observer.scalar(
+                select(func.count())
+                .select_from(Booking)
+                .where(Booking.deal_id == deal.id)
+            ) == 0
+
+        connector.release_provider.set()
+        booking_result = booking_future.result(timeout=10)
+        recovery_result = recovery_future.result(timeout=10)
+
+    assert not isinstance(booking_result, Exception)
+    assert isinstance(recovery_result, ValueError)
+    assert "not unresolved" in str(recovery_result)
+    assert connector.call_count == 1
+
+    replay_result = _approve_booking_in_session(
+        postgres_engine,
+        user_id=user.id,
+        deal_id=deal.id,
+        payment_method_id=payment_method.id,
+        idempotency_key=idempotency_key,
+    )
+    assert not isinstance(replay_result, Exception)
+    assert replay_result.idempotent_replay is True
+    assert connector.call_count == 1
+
+    with Session(postgres_engine) as verify_db:
+        attempt = verify_db.scalar(
+            select(BookingAttempt).where(
+                BookingAttempt.idempotency_key == idempotency_key
+            )
+        )
+        assert attempt is not None
+        assert attempt.status == BookingAttemptStatus.BOOKED
+        assert attempt.recovery_required is False
+        assert verify_db.get(Deal, deal.id).status == DealStatus.BOOKED
+        assert verify_db.scalar(
+            select(func.count())
+            .select_from(Booking)
+            .where(Booking.deal_id == deal.id)
+        ) == 1
 
 
 def test_concurrent_same_idempotency_key_calls_provider_once(

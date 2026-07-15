@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.activity_maintenance import acquire_activity_writer_lock
+from app.activity_maintenance import acquire_activity_maintenance_lock
 from app.db.models import (
     AuditLog,
     Booking,
@@ -43,23 +43,35 @@ def recover_unresolved_booking_attempt(
             f"Confirmation must exactly match {BOOKING_RECOVERY_CONFIRMATION}."
         )
 
-    acquire_activity_writer_lock(db)
+    acquire_activity_maintenance_lock(db)
+    attempt_snapshot = db.scalar(
+        select(BookingAttempt).where(
+            BookingAttempt.idempotency_key == idempotency_key
+        )
+    )
+    if attempt_snapshot is None:
+        raise LookupError("Booking attempt not found.")
+    if not _attempt_is_unresolved(attempt_snapshot):
+        raise ValueError("Booking attempt is not unresolved.")
+
+    deal = db.scalar(
+        select(Deal)
+        .where(Deal.id == attempt_snapshot.deal_id)
+        .with_for_update()
+    )
+    if deal is None:
+        raise LookupError("Deal not found.")
     attempt = db.scalar(
         select(BookingAttempt)
-        .where(BookingAttempt.idempotency_key == idempotency_key)
+        .where(BookingAttempt.id == attempt_snapshot.id)
         .with_for_update()
     )
     if attempt is None:
         raise LookupError("Booking attempt not found.")
-    if (
-        attempt.status
-        not in {
-            BookingAttemptStatus.STARTED,
-            BookingAttemptStatus.REVALIDATED,
-        }
-        and not attempt.recovery_required
-    ):
+    if not _attempt_is_unresolved(attempt):
         raise ValueError("Booking attempt is not unresolved.")
+    if attempt.deal_id != deal.id:
+        raise ValueError("Booking attempt deal changed during recovery.")
 
     booking_conditions = [Booking.deal_id == attempt.deal_id]
     if attempt.booking_id is not None:
@@ -70,11 +82,6 @@ def recover_unresolved_booking_attempt(
         .order_by(Booking.booked_at.desc().nullslast(), Booking.id.desc())
         .limit(1)
     )
-    deal = db.scalar(
-        select(Deal).where(Deal.id == attempt.deal_id).with_for_update()
-    )
-    if deal is None:
-        raise LookupError("Deal not found.")
 
     recovered_at = datetime.now(UTC)
     attempt.status = BookingAttemptStatus.FAILED
@@ -129,4 +136,15 @@ def recover_unresolved_booking_attempt(
         deal_status=deal_status,
         booking_exists=booking is not None,
         booking_id=str(booking.id) if booking else None,
+    )
+
+
+def _attempt_is_unresolved(attempt: BookingAttempt) -> bool:
+    return (
+        attempt.status
+        in {
+            BookingAttemptStatus.STARTED,
+            BookingAttemptStatus.REVALIDATED,
+        }
+        or attempt.recovery_required
     )
