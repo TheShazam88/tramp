@@ -123,17 +123,40 @@ The in-app `Book now` action is the real guarded booking path, not an approval-i
 2. Choose a saved payment method.
 3. Enter the six-digit TOTP code and, when the configured key mode requires it, the master-key passphrase.
 4. TRAMP mints or verifies a signed approval token and submits `/api/v1/bookings/approve` with one idempotency key.
-5. The booking service revalidates the offer and guardrails, executes the configured provider, records booking, spend, audit, and eligible stamp state in the transaction, then returns booking and balance fields.
+5. The booking service revalidates the offer and guardrails, executes the configured provider, and durably commits booking, spend, audit, notification, and eligible stamp state before any external calendar call.
+6. Calendar creation runs only after that commit. Its success, failure, or simulated log-only outcome is persisted in a second transaction. An idempotent booking replay returns the saved record and never repeats the calendar call.
 
 Exactly one ledger row is inserted only when execution is explicitly non-simulated, the deal source and provider payload are non-simulated, and the resulting booking is `ticketed` or `booked`. The unique booking constraint makes retries safe. Mock bookings, failed attempts, and idempotent replays earn no stamp; cancellation does not revoke an earned stamp.
 
 The frontend shows the blue-and-gold butterfly only when the response reports `tramp_stamps_awarded=1`. The profile and top-bar balance are calculated from `tramp_stamp_ledger`, not a mutable cached counter.
+
+## Secure cancellation
+
+Cancellation is a money-moving action and is fail-closed. The Bookings screen first mints a signed, single-use token at `POST /api/v1/bookings/{booking_id}/cancellation-approval-token`, then submits `POST /api/v1/bookings/{booking_id}/cancel` with:
+
+- `approval_token`
+- six-digit `totp_code`
+- `master_key_passphrase` when `KEY_UNLOCK_MODE=master_key`
+- a stable `idempotency_key`
+- optional `reason`
+
+The token is bound to the booking, deal, watch, and authenticated owner. The booking row is locked during execution, the provider receives the cancellation idempotency key, and replaying the same key returns the saved cancellation without another provider call. Requests missing any required security field are rejected before provider execution.
+
+## Admin recovery for unresolved booking attempts
+
+An administrator can release an ambiguous or pending attempt only after checking the provider independently and deciding that no successful provider booking should be represented in TRAMP:
+
+`POST /api/v1/admin/booking-attempts/{idempotency_key}/recover-failed`
+
+The JSON body must contain the exact confirmation `MARK ATTEMPT FAILED`. The action marks only an unresolved attempt failed, clears `recovery_required`, writes `booking_attempt.recovered_as_failed`, and returns the deal to `proposed` only when no booking row exists. If a booking row exists, its deal remains booked. This action never creates a booking or claims provider success.
 
 ## Notification delivery modes
 
 ### Log only
 
 Safe default. Notification attempts are recorded without real delivery.
+
+Simulated deals, providers, payloads, cancellations, and manual disruption tests are forced through this path even if SMTP, Telegram, or Google Calendar is configured. The local delivery and calendar outcome remain visible for audit and status review.
 
 ### SMTP dev
 

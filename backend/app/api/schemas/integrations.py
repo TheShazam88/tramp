@@ -118,6 +118,20 @@ class AdminTestDataPurgeResponse(BaseModel):
     unknown_cancellation_count: int
 
 
+class AdminBookingAttemptRecoveryRequest(BaseModel):
+    confirmation: str
+
+
+class AdminBookingAttemptRecoveryResponse(BaseModel):
+    idempotency_key: str
+    attempt_status: str
+    recovery_required: bool
+    deal_id: str
+    deal_status: str
+    booking_exists: bool
+    booking_id: str | None
+
+
 class AdminIntegrationsSummaryResponse(BaseModel):
     categories: list[AdminIntegrationCategoryResponse]
     providers: list[AdminIntegrationResponse]

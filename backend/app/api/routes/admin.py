@@ -12,6 +12,8 @@ from app.admin_activity_service import (
 )
 from app.api.deps import require_admin
 from app.api.schemas.integrations import (
+    AdminBookingAttemptRecoveryRequest,
+    AdminBookingAttemptRecoveryResponse,
     AdminCredentialProfileCreateRequest,
     AdminCredentialProfileResponse,
     AdminCredentialProfileUpdateRequest,
@@ -25,6 +27,7 @@ from app.api.schemas.integrations import (
     AdminTestDataPurgeRequest,
     AdminTestDataPurgeResponse,
 )
+from app.booking_recovery_service import recover_unresolved_booking_attempt
 from app.db.models import User
 from app.db.session import get_db_session
 from app.integrations.service import (
@@ -106,6 +109,28 @@ def _summary_response(
             else "empty",
         ),
     )
+
+
+@router.post(
+    "/booking-attempts/{idempotency_key}/recover-failed",
+    response_model=AdminBookingAttemptRecoveryResponse,
+)
+def recover_booking_attempt_record(
+    idempotency_key: str,
+    payload: AdminBookingAttemptRecoveryRequest,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+) -> AdminBookingAttemptRecoveryResponse:
+    try:
+        result = recover_unresolved_booking_attempt(
+            db=db,
+            actor=current_user,
+            idempotency_key=idempotency_key,
+            confirmation=payload.confirmation,
+        )
+    except (LookupError, ValueError) as exc:
+        raise _map_service_error(exc) from exc
+    return AdminBookingAttemptRecoveryResponse.model_validate(asdict(result))
 
 
 @router.get("/test-data/purge-preview", response_model=AdminTestDataPurgeResponse)

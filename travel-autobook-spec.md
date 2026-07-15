@@ -106,7 +106,7 @@ Backend: Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x · Jobs: Celery + Red
 
 ## 5. Providers (tiered — maximize coverage)
 
-Apply early; some need a business entity + KYC. **Flights — bookable:** Duffel (search→offer→order, NDC airline-direct, `loyalty_programme_accounts`, bags/seats; test free, live needs business+funding — primary booking), Amadeus Self-Service (free test + monthly prod quota; primary monitoring), Kiwi/Tequila (virtual interlining, LCCs). **Flights — signal:** Travelpayouts / Skyscanner affiliate (metasearch breadth + deep links; the legitimate substitute for scraping Google Flights). **Hotels — bookable (best-of):** Expedia Rapid, Booking Demand, Hotelbeds APItude (net rates), Amadeus Hotel. **Cars:** Amadeus / CarTrawler. **Notify/calendar:** Telegram Bot API, Google Calendar API. **Out of scope for booking:** Airbnb/Vrbo (Airbnb discovery-only, §8.5); luxury rate programs (Amex FHR, Virtuoso) — named as gaps (§13).
+Apply early; some need a business entity + KYC. **Flights — bookable:** Duffel (search→offer→order, NDC airline-direct, `loyalty_programme_accounts`, bags/seats; test free, live needs business+funding — primary booking), Amadeus Self-Service (free test + monthly prod quota; primary monitoring), Kiwi/Tequila (virtual interlining, LCCs). **Flights — signal:** Travelpayouts / Skyscanner affiliate (metasearch breadth + deep links; the legitimate substitute for scraping Google Flights). **Hotels — bookable (best-of):** Expedia Rapid, Booking Demand, Hotelbeds APItude (net rates), Amadeus Hotel. Booking Demand access requires confirmed Booking.com **Managed Affiliate Partner** status and Partner Centre access; joining the general affiliate program does not guarantee Demand API access. **Cars:** Amadeus / CarTrawler. **Notify/calendar:** Telegram Bot API, Google Calendar API. **Out of scope for booking:** Airbnb/Vrbo (Airbnb discovery-only, §8.5); luxury rate programs (Amex FHR, Virtuoso) — named as gaps (§13).
 
 ---
 
@@ -217,8 +217,8 @@ deals
   rejected_reason, confirm_token_hash, payload_json, created_at
 
 deal_feedback  id, watch_id, deal_id, rejected_value_score, reason, signal_type(value|preference|constraint|ambiguous), action_taken_json, created_at
-bookings  id, deal_id, provider, provider_booking_ref, status(pending_ticketing|ticketed|booked|cancel_pending|cancelled|failed), idempotency_key, amount_charged, currency, documents_json, loyalty_attached_json, loyalty_manual_followup(bool), calendar_event_id, booked_at, error_text
-cancellations  id, booking_id, reason, refund_expected, refund_received, currency, status(requested|processing|refunded|denied), requested_at, resolved_at
+bookings  id, deal_id, provider, provider_booking_ref, status(pending_ticketing|ticketed|booked|cancel_pending|cancelled|failed), idempotency_key, amount_charged, currency, documents_json, loyalty_attached_json, loyalty_manual_followup(bool), calendar_event_id, cancellation_token_hash, booked_at, error_text
+cancellations  id, booking_id, idempotency_key(unique), reason, refund_expected, refund_received, currency, status(requested|processing|refunded|denied), requested_at, resolved_at
 spend_ledger  id, user_id, watch_id, booking_id, amount, currency, booked_at
 disruptions  id, booking_id, type(schedule_change|cancellation|better_deal_in_free_window), detail_json, detected_at, status(new|notified|resolved)
 audit_log  id, actor, action, target, amount, currency, at, meta_json
@@ -303,7 +303,7 @@ Check each selected traveler's passport expiry vs travel date (warn if <6 months
 Subscribe to provider webhooks (Duffel order changes; hotel cancellations) + poll where unavailable. On change/cancellation → notify, summarize, offer a rebooking search; never auto-rebook without approval. Free-cancellation tracker: if a better deal appears while a refundable booking is inside its free-cancel window, alert "cheaper option found — cancel & rebook?" (manual confirm).
 
 ### 8.8 Cancellation & refunds (in-app)
-Booking is only half a product — the user must be able to **unwind** it. From the booking detail, show the cancellation policy and any refund/void window, and allow the user to cancel within policy (flights via Duffel order cancel/void; hotels via the supplier's cancel endpoint). Track refund status to completion in `cancellations`, write `audit_log`, remove the calendar event, and reconcile the refund against `spend_ledger`. Cancellation is a money-moving action: same signed-approval + (in `master_key` mode) master-key gate as booking.
+Booking is only half a product — the user must be able to **unwind** it. From the booking detail, show the cancellation policy and any refund/void window, and allow the user to cancel within policy (flights via Duffel order cancel/void; hotels via the supplier's cancel endpoint). Track refund status to completion in `cancellations`, write `audit_log`, remove the calendar event, and reconcile the refund against `spend_ledger`. Cancellation is a money-moving action: mint a booking/deal/watch/user-bound, signed single-use cancellation token, then require that token, login, TOTP, a stable cancellation idempotency key, and (in `master_key` mode) the master key before calling the provider. Replaying the same cancellation key returns the saved result without another provider call.
 
 ### 8.9 On-demand search ("find me something now")
 Besides the daily cadence, a one-tap **Search now** on any watch runs the full pipeline immediately and returns the current best value with its historical context — for when the user is actively planning and doesn't want to wait for the next scheduled run.
@@ -392,6 +392,8 @@ One `KeyProvider` interface with both modes; selectable in Profile/Settings. In 
 Per-adapter usage counters vs free tiers; throttle/pause near quota to stay free; log spend for paid sources (proxy, Airbnb data API). Adapter health: repeated errors → degraded, surfaced in UI, others keep running. Optional daily run summary.
 
 **Selective simulated-activity purge:** Admin → Runtime must provide a non-mutating preview and a preview-bound execution step requiring the exact phrase `PURGE TEST DATA`. Classification removes only simulated observations, deals, attempts, bookings, related cancellations/disruptions/notifications/spend/audit state, affected learning artifacts, and derived `price_stats`; it restores eligible watch/deal/booking state in one transaction. Preserve account and household setup, watch definitions, integration settings, live activity, and `tramp_stamp_ledger`. Abort if a selected booking is referenced by a stamp row or if the plan digest changed after preview.
+
+**Unresolved booking-attempt recovery:** an admin-only, explicitly confirmed action may mark an ambiguous or pending attempt failed and clear its recovery claim after independent provider review. It returns the deal to `proposed` only when no booking row exists, always writes audit, and never fabricates a successful provider booking.
 
 ---
 
