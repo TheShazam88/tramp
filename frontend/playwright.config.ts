@@ -1,7 +1,10 @@
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "@playwright/test";
+
+const frontendDirectory = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
@@ -14,6 +17,7 @@ export default defineConfig({
   },
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --port 4173",
+    cwd: frontendDirectory,
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
   },
