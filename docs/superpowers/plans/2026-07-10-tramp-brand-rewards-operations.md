@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.12, FastAPI, SQLAlchemy 2, Alembic, PostgreSQL, Pytest, React 19, TypeScript 6, TanStack Query, Vite 8, CSS/SVG animation, Playwright Chromium, Docker Compose, GitHub CLI.
 
+**Copy-guard cancellation (2026-07-15):** The user explicitly cancelled the user-facing copy-guard task. The scanner, its package scripts, build integration, and copy-specific required QA are intentionally excluded. This does not remove normal clipboard support; the `PurgeTestDataPanel` copy button remains required.
+
 ---
 
 ## File Structure
@@ -26,7 +28,6 @@
 - `frontend/src/components/rewards/TrampStampButterfly.tsx`: approved SVG and animation.
 - `frontend/src/components/admin/CredentialGuide.tsx`: provider acquisition disclosure.
 - `frontend/src/components/admin/PurgeTestDataPanel.tsx`: preview and confirmed purge UI.
-- `frontend/scripts/check-user-copy.mjs`: user-facing long-dash regression check.
 - `frontend/scripts/capture-screenshots.mjs`: deterministic local screenshot capture.
 - `docs/screenshots/01-watches-dashboard.png`
 - `docs/screenshots/02-deal-review.png`
@@ -115,98 +116,9 @@ Expected: all three backup files exist outside the repository.
 
 ---
 
-### Task 2: Add the User-Facing Copy Guard
+### Task 2: User-Facing Copy Guard (Cancelled)
 
-**Files:**
-- Create: `frontend/scripts/check-user-copy.mjs`
-- Modify: `frontend/package.json`
-
-- [ ] **Step 1: Write the failing copy-check smoke case**
-
-Create a temporary file and run the not-yet-existing command:
-
-```bash
-printf 'Bad \342\200\224 copy\n' > /tmp/tramp-bad-copy.txt
-cd frontend
-npm run check:copy -- /tmp/tramp-bad-copy.txt
-```
-
-Expected: FAIL because `check:copy` does not exist.
-
-- [ ] **Step 2: Implement the dependency-free scanner**
-
-Create `frontend/scripts/check-user-copy.mjs`:
-
-```javascript
-import { readdir, readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
-
-const forbidden = /[\u2013\u2014]/g;
-const defaults = ["src", "index.html"];
-const requested = process.argv.slice(2);
-const roots = (requested.length ? requested : defaults).map((item) => resolve(item));
-const files = [];
-
-async function collect(path) {
-  const info = await stat(path);
-  if (info.isFile()) {
-    files.push(path);
-    return;
-  }
-  for (const entry of await readdir(path, { withFileTypes: true })) {
-    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-    await collect(resolve(path, entry.name));
-  }
-}
-
-for (const root of roots) await collect(root);
-
-const failures = [];
-for (const file of files) {
-  const text = await readFile(file, "utf8");
-  text.split(/\r?\n/).forEach((line, index) => {
-    if (forbidden.test(line)) failures.push(`${file}:${index + 1}: ${line.trim()}`);
-    forbidden.lastIndex = 0;
-  });
-}
-
-if (failures.length) {
-  console.error("User-facing copy contains an em dash or en dash:");
-  console.error(failures.join("\n"));
-  process.exit(1);
-}
-console.log(`Copy check passed across ${files.length} files.`);
-```
-
-- [ ] **Step 3: Wire the scanner into the build**
-
-Update `frontend/package.json` scripts:
-
-```json
-{
-  "check:copy": "node scripts/check-user-copy.mjs",
-  "build": "npm run check:copy && tsc --noEmit && vite build"
-}
-```
-
-- [ ] **Step 4: Verify failure and success**
-
-Run:
-
-```bash
-cd frontend
-npm run check:copy -- /tmp/tramp-bad-copy.txt
-npm run check:copy
-```
-
-Expected: the first command fails with file and line; the second passes.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add frontend/scripts/check-user-copy.mjs frontend/package.json
-git commit -m "Add user-facing copy guard"
-```
+The user explicitly cancelled this task on 2026-07-15. Do not add a copy scanner, package command, build gate, or copy-specific QA requirement. This cancellation does not affect application clipboard features.
 
 ---
 
@@ -1121,12 +1033,11 @@ Expected: `All checks passed!`
 
 ```bash
 cd frontend
-npm run check:copy
 npm run build
 node scripts/capture-screenshots.mjs --smoke
 ```
 
-Expected: copy check, TypeScript, Vite, and browser smoke pass.
+Expected: TypeScript, Vite, and browser smoke pass.
 
 - [ ] **Step 4: Validate operations**
 
@@ -1140,9 +1051,9 @@ git diff --check
 
 Expected: both commands return zero.
 
-- [ ] **Step 5: Run secret and long-dash scans**
+- [ ] **Step 5: Run secret scan**
 
-Search tracked content for the known removed credential patterns and scan `frontend/src` plus `frontend/index.html` for Unicode em dash and en dash.
+Search tracked content for the known removed credential patterns.
 
 Expected: no matches.
 
@@ -1200,7 +1111,7 @@ Expected: only `main` remains remotely. Keep local legacy and feature branches.
 - [ ] API guides are structured and use official URLs.
 - [ ] Purge is preview-first and the confirmation phrase is copyable.
 - [ ] Test purge preserves setup, watches, live activity, and stamps.
-- [ ] User-facing long dashes are blocked.
+- [ ] The user-cancelled copy guard remains excluded without removing clipboard support.
 - [ ] Screenshots and README use the value-first order.
 - [ ] Legacy backup is outside the repository.
 - [ ] Remote Cursor branch removal happens only after verified main publication.

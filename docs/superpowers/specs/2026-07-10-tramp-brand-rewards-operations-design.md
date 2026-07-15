@@ -1,5 +1,7 @@
 # TRAMP Brand, Rewards, Operations, and Release Design
 
+> **Copy-guard cancellation (2026-07-15):** The user explicitly cancelled the user-facing copy-guard task. No scanner, package command, build gate, or copy-specific required QA remains in scope. Normal clipboard support is unchanged, including the `PurgeTestDataPanel` copy button.
+
 ## Goal
 
 Ship a cohesive release that preserves the established TRAMP interface while adding:
@@ -197,7 +199,6 @@ Run purge in one transaction. Return per-table deletion counts and watch reset c
 - Auto-open secure booking review when a valid signed approval link is present.
 - Move disruption simulation into a collapsed `Local test tools` section.
 - Preserve all existing controls and advanced options.
-- Add a dependency-free copy check that rejects em dashes and en dashes in live frontend source.
 
 ## 7. Screenshots and README
 
@@ -245,7 +246,6 @@ Backend:
 
 Frontend:
 
-- copy check
 - TypeScript and Vite production build
 - booking form behavior
 - animation trigger and reduced-motion behavior

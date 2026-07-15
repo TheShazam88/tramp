@@ -1,12 +1,14 @@
 # User-Facing Copy Quality and Platform Audit Design
 
+> **Status (2026-07-15):** The user explicitly cancelled the copy-guard task. Its scanner, package commands, build integration, and copy-specific required QA are intentionally removed. Normal clipboard support remains in scope, including the `PurgeTestDataPanel` copy button.
+
 ## Scope
 
-Remove and prevent em dashes and en dashes in the live frontend only. Architecture documents and unserved mockups are outside this cleanup.
+The copy-guard portion of this design is cancelled. The platform-audit scope below remains as historical context; it does not impose automated copy restrictions.
 
-## Copy Check
+## Copy Guard (Cancelled)
 
-Add a dependency-free Node script that scans `frontend/src` and `frontend/index.html` for Unicode em dash and en dash characters. The script reports each matching file and line, exits with a failure code, and runs before the existing TypeScript and Vite production build.
+Do not add or require a copy scanner, package command, or production-build gate.
 
 ## Platform Audit
 
@@ -23,18 +25,16 @@ Only reproducible correctness or reliability defects are in scope. Broad redesig
 
 ## Error Handling
 
-The copy check must fail clearly with file names, line numbers, and the offending character. Existing runtime errors should continue through current API and UI error surfaces.
+Existing runtime errors should continue through current API and UI error surfaces.
 
 ## Verification
 
-- run the copy check directly
 - run all backend tests in Docker
 - run Ruff on changed Python files
 - run the production frontend build
 - validate Docker Compose with test-only environment values
 - run `git diff --check`
-- rescan user-facing frontend source for long dashes
 
 ## Commit Boundaries
 
-Commit only the copy check, verified platform fixes, tests, and this design document. Exclude the modified SQLite fixture and the pre-existing admin integration plan.
+Commit only verified platform fixes, tests, and this design document. Exclude the modified SQLite fixture and the pre-existing admin integration plan.
