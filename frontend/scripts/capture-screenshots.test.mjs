@@ -6,7 +6,11 @@ import { test } from "node:test";
 
 import * as screenshotScript from "./capture-screenshots.mjs";
 
-const { SCREENSHOTS, validatePngBuffer } = screenshotScript;
+const {
+  ADMIN_GUIDANCE_CAPTURE,
+  SCREENSHOTS,
+  validatePngBuffer,
+} = screenshotScript;
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -74,6 +78,13 @@ const expectedScreenshots = [
 
 test("defines the four deterministic documentation captures", () => {
   assert.deepEqual(SCREENSHOTS, expectedScreenshots);
+});
+
+test("defines the expanded Admin credential guidance capture", () => {
+  assert.deepEqual(ADMIN_GUIDANCE_CAPTURE, {
+    parentSummary: "Profile fields",
+    guideSummary: "How to get Flights · Duffel credentials",
+  });
 });
 
 test("exposes Vite startup for focused lifecycle tests", () => {

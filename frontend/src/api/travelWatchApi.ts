@@ -2238,8 +2238,93 @@ function mockProfileWorkspace(): ProfileWorkspace {
       billingCountry: "US",
     },
   ];
+  workspace.travelers = [
+    {
+      id: "mock-traveler-self",
+      displayName: "Demo Traveler",
+      relationship: "self",
+      legalFirstName: "Demo",
+      legalLastName: "Traveler",
+      dob: "1988-04-12",
+      nationality: "US",
+      residencyCountry: "JP",
+      passportNumber: "",
+      passportCountry: "US",
+      passportExpiry: "2031-08-20",
+      knownTravelerNumber: "",
+      redressNumber: "",
+      seatPreference: "window",
+      mealPreference: "vegetarian",
+      loyaltyProgramCode: "FB",
+      loyaltyAccountNumber: "DEMO-FB-001",
+      loyaltyAlliance: "skyteam",
+      loyaltyStatusTier: "Gold",
+      preferredEarningForAlliance: true,
+      loyaltyPrograms: [
+        {
+          programType: "airline",
+          programCode: "FB",
+          accountNumber: "DEMO-FB-001",
+          alliance: "skyteam",
+          statusTier: "Gold",
+          isFavorite: true,
+        },
+      ],
+      accessibilityNeeds: "",
+      infantOnLap: false,
+    },
+    {
+      id: "mock-traveler-partner",
+      displayName: "Demo Partner",
+      relationship: "partner",
+      legalFirstName: "Demo",
+      legalLastName: "Partner",
+      dob: "1990-09-03",
+      nationality: "JP",
+      residencyCountry: "JP",
+      passportNumber: "",
+      passportCountry: "JP",
+      passportExpiry: "2030-11-14",
+      knownTravelerNumber: "",
+      redressNumber: "",
+      seatPreference: "aisle",
+      mealPreference: "",
+      loyaltyProgramCode: "NH",
+      loyaltyAccountNumber: "DEMO-NH-002",
+      loyaltyAlliance: "star",
+      loyaltyStatusTier: "",
+      preferredEarningForAlliance: false,
+      loyaltyPrograms: [
+        {
+          programType: "airline",
+          programCode: "NH",
+          accountNumber: "DEMO-NH-002",
+          alliance: "star",
+          statusTier: "",
+          isFavorite: false,
+        },
+      ],
+      accessibilityNeeds: "",
+      infantOnLap: false,
+    },
+  ];
+  workspace.travelerGroupOptions = [
+    {
+      id: "mock-group-partners",
+      name: "Demo travelers",
+      travelerIds: ["mock-traveler-self", "mock-traveler-partner"],
+    },
+  ];
+  workspace.travelerGroups = ["Demo travelers"];
+  workspace.householdSummary.travelerCount = workspace.travelers.length;
+  workspace.householdSummary.travelerGroupCount =
+    workspace.travelerGroupOptions.length;
   workspace.householdSummary.paymentMethodCount = 1;
   workspace.householdSummary.hasPaymentMethod = true;
+  workspace.householdSummary.hasSelfTraveler = true;
+  workspace.householdSummary.passportGapCount = 0;
+  workspace.householdSummary.setupWarnings = [];
+  workspace.householdSummary.readinessLabel = "Household ready";
   return workspace;
 }
 

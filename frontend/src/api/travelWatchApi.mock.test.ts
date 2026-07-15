@@ -24,6 +24,32 @@ describe("travelWatchApi mock payment and booking isolation", () => {
         last4: expect.stringMatching(/^\d{4}$/),
       }),
     ]);
+    expect(workspace.travelers).toEqual([
+      expect.objectContaining({
+        id: "mock-traveler-self",
+        displayName: "Demo Traveler",
+        relationship: "self",
+      }),
+      expect.objectContaining({
+        id: "mock-traveler-partner",
+        displayName: "Demo Partner",
+        relationship: "partner",
+      }),
+    ]);
+    expect(workspace.travelerGroupOptions).toEqual([
+      {
+        id: "mock-group-partners",
+        name: "Demo travelers",
+        travelerIds: ["mock-traveler-self", "mock-traveler-partner"],
+      },
+    ]);
+    expect(workspace.householdSummary).toEqual(
+      expect.objectContaining({
+        travelerCount: 2,
+        travelerGroupCount: 1,
+        hasSelfTraveler: true,
+      }),
+    );
 
     await travelWatchApi.savePaymentMethod({
       label: "Demo backup",

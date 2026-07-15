@@ -387,7 +387,48 @@ export const integrationData: IntegrationData = {
       featureFlags: [
         { label: "Live search shape", enabled: false },
       ],
-      credentialFields: [],
+      guide: {
+        links: [
+          {
+            label: "Amadeus developer portal registration",
+            url: "https://developers.amadeus.com/",
+          },
+          {
+            label: "Amadeus quick start and application creation",
+            url:
+              "https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/quick-start/",
+          },
+        ],
+        accountRequirements: [
+          "An Amadeus for Developers account.",
+        ],
+        steps: [
+          "Create a Self-Service application and copy its test credentials.",
+          "Save them in a reusable TRAMP profile, then run the local configuration check.",
+        ],
+        environmentNotes: [
+          "TRAMP documentation captures remain simulated and never call Amadeus.",
+        ],
+        enables: [
+          "Reusable credential configuration for Flights and Booking.",
+        ],
+      },
+      credentialFields: [
+        {
+          key: "client_id",
+          label: "Client ID",
+          placeholder: "Amadeus API key",
+          helpText: "Write-only demo field. The saved value remains masked.",
+          sensitive: true,
+        },
+        {
+          key: "client_secret",
+          label: "Client secret",
+          placeholder: "Amadeus API secret",
+          helpText: "Write-only demo field. The saved value remains masked.",
+          sensitive: true,
+        },
+      ],
       featureFlagDefinitions: [],
       detail:
         "Amadeus credentials are configured locally. Current flight search remains deterministic and simulated.",
@@ -410,7 +451,40 @@ export const integrationData: IntegrationData = {
       featureFlags: [
         { label: "Live search shape", enabled: false },
       ],
-      credentialFields: [],
+      guide: {
+        links: [
+          {
+            label: "Duffel account signup",
+            url: "https://duffel.com/",
+          },
+          {
+            label: "Duffel dashboard and access-token setup",
+            url: "https://duffel.com/guides/getting-started",
+          },
+        ],
+        accountRequirements: [
+          "A Duffel account with dashboard access.",
+        ],
+        steps: [
+          "Create a test access token in the Duffel dashboard.",
+          "Save it in a reusable TRAMP profile, then run the local configuration check.",
+        ],
+        environmentNotes: [
+          "TRAMP documentation captures remain simulated and never call Duffel.",
+        ],
+        enables: [
+          "Reusable credential configuration for Flights and Booking.",
+        ],
+      },
+      credentialFields: [
+        {
+          key: "access_token",
+          label: "Access token",
+          placeholder: "duffel_test_...",
+          helpText: "Write-only demo field. The saved value remains masked.",
+          sensitive: true,
+        },
+      ],
       featureFlagDefinitions: [],
       detail:
         "Duffel credentials are configured locally. Current flight search remains deterministic and simulated.",

@@ -70,6 +70,11 @@ export const SCREENSHOTS = [
   },
 ];
 
+export const ADMIN_GUIDANCE_CAPTURE = {
+  parentSummary: "Profile fields",
+  guideSummary: "How to get Flights · Duffel credentials",
+};
+
 export function validatePngBuffer(
   buffer,
   expectedDimensions = VIEWPORT,
@@ -407,6 +412,32 @@ async function stabilizePage(page) {
 }
 
 async function positionPage(page, definition) {
+  if (definition.filename === "03-admin-integrations.png") {
+    for (const summaryText of [
+      ADMIN_GUIDANCE_CAPTURE.parentSummary,
+      ADMIN_GUIDANCE_CAPTURE.guideSummary,
+    ]) {
+      const summary = page.getByText(summaryText, { exact: true }).first();
+      await summary.waitFor({ state: "visible" });
+      const disclosure = summary.locator("xpath=ancestor::details[1]");
+      if (!(await disclosure.evaluate((element) => element.open))) {
+        await summary.click();
+      }
+    }
+    await page
+      .getByText("Account requirements", { exact: true })
+      .first()
+      .waitFor({ state: "visible" });
+    await page
+      .getByText(ADMIN_GUIDANCE_CAPTURE.guideSummary, { exact: true })
+      .first()
+      .evaluate((element) => {
+        const top = element.getBoundingClientRect().top + window.scrollY - 480;
+        window.scrollTo(0, Math.max(0, top));
+      });
+    return;
+  }
+
   if (definition.filename !== "04-household-workspace.png") {
     await page.evaluate(() => window.scrollTo(0, 0));
     return;
