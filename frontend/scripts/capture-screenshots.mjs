@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,35 @@ const scriptPath = fileURLToPath(import.meta.url);
 const scriptsDirectory = path.dirname(scriptPath);
 const frontendDirectory = path.resolve(scriptsDirectory, "..");
 const screenshotsDirectory = path.resolve(frontendDirectory, "../docs/screenshots");
-const viteExecutable = path.resolve(frontendDirectory, "node_modules/vite/bin/vite.js");
+const viteModuleUrl = import.meta.resolve("vite");
+const childLifecycles = new WeakMap();
+const VITE_BOOTSTRAP_SOURCE = `
+  import { createServer } from ${JSON.stringify(viteModuleUrl)};
+
+  const host = process.env.TRAMP_SCREENSHOT_HOST;
+  const port = Number(process.env.TRAMP_SCREENSHOT_PORT);
+  const readyMarker = process.env.TRAMP_SCREENSHOT_READY_MARKER;
+  const server = await createServer({
+    root: process.cwd(),
+    server: { host, port, strictPort: true },
+  });
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      await server.close();
+      process.exit(0);
+    } catch (error) {
+      console.error(error);
+      process.exit(1);
+    }
+  };
+  process.once("SIGINT", () => void shutdown());
+  process.once("SIGTERM", () => void shutdown());
+  await server.listen();
+  process.stdout.write(readyMarker + "\\n");
+`;
 
 export const SCREENSHOTS = [
   {
@@ -133,69 +162,199 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function waitForVite(server, getOutput) {
-  const deadline = Date.now() + 20_000;
+function timeoutAfter(milliseconds, value) {
+  let timeoutId;
+  return {
+    promise: new Promise((resolve) => {
+      timeoutId = setTimeout(() => resolve(value), milliseconds);
+    }),
+    cancel() {
+      clearTimeout(timeoutId);
+    },
+  };
+}
+
+function observeChild(server) {
+  const closePromise =
+    server.exitCode !== null || server.signalCode !== null
+      ? Promise.resolve({
+          type: "close",
+          code: server.exitCode,
+          signal: server.signalCode,
+        })
+      : new Promise((resolve) => {
+          server.once("close", (code, signal) => {
+            resolve({ type: "close", code, signal });
+          });
+        });
+  const errorPromise = new Promise((resolve) => {
+    server.once("error", (error) => {
+      resolve({ type: "error", error });
+    });
+  });
+  const lifecycle = {
+    closePromise,
+    terminalPromise: Promise.race([closePromise, errorPromise]),
+  };
+  childLifecycles.set(server, lifecycle);
+  return lifecycle;
+}
+
+function startupFailure(event, getOutput) {
+  if (event.type === "error") {
+    return new Error(`Vite failed to start: ${event.error.message}.\n${getOutput()}`);
+  }
+  const result =
+    event.code !== null ? `code ${event.code}` : `signal ${event.signal ?? "unknown"}`;
+  return new Error(`Vite exited before becoming ready (${result}).\n${getOutput()}`);
+}
+
+async function waitForVite(
+  server,
+  lifecycle,
+  getOutput,
+  {
+    baseUrl = BASE_URL,
+    fetchImplementation = fetch,
+    readyMarker,
+    readyPromise,
+    timeoutMs = 20_000,
+  } = {},
+) {
+  const deadline = Date.now() + timeoutMs;
+  const startupTimeout = timeoutAfter(timeoutMs, { type: "timeout" });
+  const initialEvent = await Promise.race([
+    readyPromise,
+    lifecycle.terminalPromise,
+    startupTimeout.promise,
+  ]);
+  startupTimeout.cancel();
+  if (initialEvent.type === "error" || initialEvent.type === "close") {
+    throw startupFailure(initialEvent, getOutput);
+  }
+  if (initialEvent.type === "timeout") {
+    throw new Error(
+      `Timed out waiting for Vite child marker ${readyMarker} at ${baseUrl}.\n${getOutput()}`,
+    );
+  }
+
   while (Date.now() < deadline) {
-    if (server.exitCode !== null) {
-      throw new Error(
-        `Vite exited before becoming ready (code ${server.exitCode}).\n${getOutput()}`,
+    if (server.exitCode !== null || server.signalCode !== null) {
+      throw startupFailure(
+        {
+          type: "close",
+          code: server.exitCode,
+          signal: server.signalCode,
+        },
+        getOutput,
       );
     }
-    try {
-      const response = await fetch(BASE_URL, {
-        signal: AbortSignal.timeout(750),
-      });
-      if (response.ok) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const request = Promise.resolve()
+      .then(() =>
+        fetchImplementation(baseUrl, {
+          signal: AbortSignal.timeout(Math.min(750, remainingMs)),
+        }),
+      )
+      .then(
+        (response) => ({ type: "response", response }),
+        () => ({ type: "retry" }),
+      );
+    const event = await Promise.race([request, lifecycle.terminalPromise]);
+    if (event.type === "error" || event.type === "close") {
+      throw startupFailure(event, getOutput);
+    }
+    if (event.type === "response" && event.response.ok) {
+      await delay(0);
+      if (server.exitCode === null && server.signalCode === null) {
         return;
       }
-    } catch {
-      // The local server is still starting.
     }
     await delay(100);
   }
-  throw new Error(`Timed out waiting for ${BASE_URL}.\n${getOutput()}`);
+  throw new Error(`Timed out waiting for ${baseUrl}.\n${getOutput()}`);
 }
 
-async function startVite() {
-  const server = spawn(
+export async function startVite({
+  fetchImplementation = fetch,
+  host = HOST,
+  port = PORT,
+  spawnProcess = spawn,
+  timeoutMs = 20_000,
+} = {}) {
+  const baseUrl = `http://${host}:${port}`;
+  const readyMarker = `TRAMP_SCREENSHOT_READY:${randomUUID()}`;
+  const server = spawnProcess(
     process.execPath,
     [
-      viteExecutable,
-      "--host",
-      HOST,
-      "--port",
-      String(PORT),
-      "--strictPort",
+      "--input-type=module",
+      "--eval",
+      VITE_BOOTSTRAP_SOURCE,
     ],
     {
       cwd: frontendDirectory,
-      env: sanitizedViteEnvironment(),
+      env: {
+        ...sanitizedViteEnvironment(),
+        TRAMP_SCREENSHOT_HOST: host,
+        TRAMP_SCREENSHOT_PORT: String(port),
+        TRAMP_SCREENSHOT_READY_MARKER: readyMarker,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
 
+  const lifecycle = observeChild(server);
   let output = "";
+  let resolveReady;
+  const readyPromise = new Promise((resolve) => {
+    resolveReady = resolve;
+  });
   const recordOutput = (chunk) => {
     output = `${output}${chunk.toString()}`.slice(-12_000);
+    if (output.includes(readyMarker)) {
+      resolveReady({ type: "ready" });
+    }
   };
-  server.stdout.on("data", recordOutput);
-  server.stderr.on("data", recordOutput);
 
-  await waitForVite(server, () => output);
-  return server;
+  try {
+    server.stdout.on("data", recordOutput);
+    server.stderr.on("data", recordOutput);
+    await waitForVite(server, lifecycle, () => output, {
+      baseUrl,
+      fetchImplementation,
+      readyMarker,
+      readyPromise,
+      timeoutMs,
+    });
+    return server;
+  } catch (error) {
+    await stopProcess(server);
+    throw error;
+  }
 }
 
 async function stopProcess(server) {
-  if (!server || server.exitCode !== null) {
+  if (!server) {
     return;
   }
-  server.kill("SIGTERM");
-  const exited = new Promise((resolve) => server.once("exit", resolve));
-  await Promise.race([exited, delay(2_000)]);
-  if (server.exitCode === null) {
-    server.kill("SIGKILL");
-    await new Promise((resolve) => server.once("exit", resolve));
+  const lifecycle = childLifecycles.get(server) ?? observeChild(server);
+  if (server.exitCode === null && server.signalCode === null) {
+    server.kill("SIGTERM");
   }
+  const shutdownTimeout = timeoutAfter(2_000, null);
+  const terminalEvent = await Promise.race([
+    lifecycle.terminalPromise,
+    shutdownTimeout.promise,
+  ]);
+  shutdownTimeout.cancel();
+  if (terminalEvent) {
+    await lifecycle.closePromise;
+    return;
+  }
+  if (server.exitCode === null && server.signalCode === null) {
+    server.kill("SIGKILL");
+  }
+  await lifecycle.closePromise;
 }
 
 async function installDeterministicPageState(page) {
