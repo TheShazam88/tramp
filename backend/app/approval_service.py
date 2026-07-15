@@ -6,10 +6,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.config import get_settings
-from app.db.models import Deal, DealStatus, User
+from app.db.models import Booking, BookingStatus, Deal, DealStatus, TripWatch, User
 from app.security.tokens import SignedToken, SignedTokenService
 
 APPROVAL_AUDIENCE = "deal-approval"
+CANCELLATION_APPROVAL_AUDIENCE = "booking-cancellation-approval"
 
 
 def issue_approval_token(
@@ -63,6 +64,69 @@ def verify_approval_token(
 
 def consume_approval_token(*, deal: Deal) -> None:
     deal.confirm_token_hash = None
+
+
+def issue_cancellation_approval_token(
+    *,
+    booking: Booking,
+    deal: Deal,
+    watch: TripWatch,
+    user: User,
+    token_service: SignedTokenService,
+) -> SignedToken:
+    if booking.status not in {BookingStatus.TICKETED, BookingStatus.BOOKED}:
+        raise ValueError("Only active completed bookings can receive cancellation tokens.")
+
+    settings = get_settings()
+    signed = token_service.create(
+        subject=str(booking.id),
+        audience=CANCELLATION_APPROVAL_AUDIENCE,
+        expires_in=timedelta(minutes=settings.approval_token_ttl_minutes),
+        payload={
+            "booking_id": str(booking.id),
+            "deal_id": str(deal.id),
+            "watch_id": str(watch.id),
+            "user_id": str(user.id),
+            "nonce": secrets.token_urlsafe(12),
+        },
+    )
+    booking.cancellation_token_hash = hash_approval_token(signed.token)
+    return signed
+
+
+def verify_cancellation_approval_token(
+    *,
+    booking: Booking,
+    deal: Deal,
+    watch: TripWatch,
+    user: User,
+    token: str,
+    token_service: SignedTokenService,
+) -> dict[str, Any]:
+    claims = token_service.decode(token, audience=CANCELLATION_APPROVAL_AUDIENCE)
+    expected_claims = {
+        "booking_id": booking.id,
+        "deal_id": deal.id,
+        "watch_id": watch.id,
+        "user_id": user.id,
+    }
+    for key, expected in expected_claims.items():
+        if str(claims.get(key) or (claims.get("sub") if key == "booking_id" else "")) != str(
+            expected
+        ):
+            raise ValueError(f"Cancellation approval token does not match this {key[:-3]}.")
+    if not booking.cancellation_token_hash:
+        raise ValueError("Cancellation approval token has already been used or rotated.")
+    if not secrets.compare_digest(
+        booking.cancellation_token_hash,
+        hash_approval_token(token),
+    ):
+        raise ValueError("Cancellation approval token is invalid or has been superseded.")
+    return claims
+
+
+def consume_cancellation_approval_token(*, booking: Booking) -> None:
+    booking.cancellation_token_hash = None
 
 
 def approval_token_expiry(claims: dict[str, Any]) -> datetime:

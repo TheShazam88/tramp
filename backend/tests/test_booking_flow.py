@@ -8,13 +8,14 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app import booking_service, tramp_stamp_service
+from app import approval_service, booking_service, tramp_stamp_service
 from app.approval_service import consume_approval_token, issue_approval_token, verify_approval_token
 from app.config import get_settings
 from app.db.models import (
     Booking,
     BookingAttempt,
     BookingStatus,
+    Cancellation,
     CancellationStatus,
     Deal,
     DealStatus,
@@ -27,11 +28,15 @@ from app.db.models import (
     User,
 )
 from app.security.tokens import SignedTokenService
+from app.service_errors import AuthenticationError
 from app.watch_mock_adapter import DeterministicMockAdapter
 
 
 def _configure_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APP_SECRET", "test-master-secret")
+    monkeypatch.setenv(
+        "APP_SECRET",
+        "test-master-secret-with-more-than-thirty-two-bytes",
+    )
     monkeypatch.setenv("BOOKING_MASTER_KEY_PASSPHRASE", "test-master-secret")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost/test_db")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
@@ -185,6 +190,313 @@ def test_approval_token_is_single_use_and_rotates(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(ValueError):
         verify_approval_token(deal=deal, user=user, token=second.token, token_service=token_service)
+
+
+def test_cancellation_approval_token_is_single_use_and_booking_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_settings(monkeypatch)
+    token_service = SignedTokenService()
+    user = _build_user()
+    watch = _build_watch(user=user)
+    deal = Deal(
+        id=uuid4(),
+        watch_id=watch.id,
+        kind="flight",
+        source="live-duffel",
+        total_price=Decimal("640.00"),
+        currency="USD",
+        fingerprint_hash="cancellation-approval",
+        status=DealStatus.BOOKED,
+    )
+    booking = Booking(
+        id=uuid4(),
+        deal_id=deal.id,
+        provider="duffel",
+        status=BookingStatus.TICKETED,
+        idempotency_key="booked-before-cancellation",
+    )
+
+    first = approval_service.issue_cancellation_approval_token(
+        booking=booking,
+        deal=deal,
+        watch=watch,
+        user=user,
+        token_service=token_service,
+    )
+    first_hash = booking.cancellation_token_hash
+    claims = approval_service.verify_cancellation_approval_token(
+        booking=booking,
+        deal=deal,
+        watch=watch,
+        user=user,
+        token=first.token,
+        token_service=token_service,
+    )
+
+    assert claims["booking_id"] == str(booking.id)
+    assert claims["deal_id"] == str(deal.id)
+    assert claims["watch_id"] == str(watch.id)
+    assert claims["user_id"] == str(user.id)
+
+    second = approval_service.issue_cancellation_approval_token(
+        booking=booking,
+        deal=deal,
+        watch=watch,
+        user=user,
+        token_service=token_service,
+    )
+    assert booking.cancellation_token_hash != first_hash
+
+    with pytest.raises(ValueError, match="invalid or has been superseded"):
+        approval_service.verify_cancellation_approval_token(
+            booking=booking,
+            deal=deal,
+            watch=watch,
+            user=user,
+            token=first.token,
+            token_service=token_service,
+        )
+
+    approval_service.consume_cancellation_approval_token(booking=booking)
+    with pytest.raises(ValueError, match="already been used"):
+        approval_service.verify_cancellation_approval_token(
+            booking=booking,
+            deal=deal,
+            watch=watch,
+            user=user,
+            token=second.token,
+            token_service=token_service,
+        )
+
+
+def test_secure_cancellation_is_idempotent_and_suppresses_simulated_notifications(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _build_user()
+    watch = _build_watch(user=user)
+    deal = Deal(
+        id=uuid4(),
+        watch_id=watch.id,
+        kind="flight",
+        source="mock-duffel",
+        total_price=Decimal("640.00"),
+        currency="USD",
+        fingerprint_hash="secure-cancellation",
+        status=DealStatus.BOOKED,
+    )
+    booking = Booking(
+        id=uuid4(),
+        deal_id=deal.id,
+        provider="mock-booking",
+        provider_booking_ref="MOCK-BOOKING-1",
+        status=BookingStatus.TICKETED,
+        idempotency_key="original-booking-key",
+        cancellation_token_hash="token-hash",
+    )
+    provider_calls = 0
+    consumed_tokens = 0
+    queued_notifications: list[dict[str, object]] = []
+    state: dict[str, Cancellation | None] = {"existing": None}
+
+    class CancellationSession:
+        def __init__(self) -> None:
+            self.added: list[object] = []
+            self.commits = 0
+
+        def add(self, value: object) -> None:
+            self.added.append(value)
+            if isinstance(value, Cancellation):
+                if value.id is None:
+                    value.id = uuid4()
+                state["existing"] = value
+
+        def add_all(self, values: list[object]) -> None:
+            for value in values:
+                self.add(value)
+
+        def flush(self) -> None:
+            for value in self.added:
+                if getattr(value, "id", None) is None:
+                    value.id = uuid4()
+
+        def commit(self) -> None:
+            self.commits += 1
+
+        def refresh(self, _value: object) -> None:
+            return None
+
+    def cancel_provider(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        return SimpleNamespace(
+            provider="local-safe-booking",
+            simulated=True,
+            status=CancellationStatus.REFUNDED,
+            refund_expected=Decimal("640.00"),
+            refund_received=Decimal("640.00"),
+            currency="USD",
+            resolved_at=datetime.now(UTC),
+            provider_correlation_id="mock-cancel-1",
+            provider_payload={"simulated": True},
+        )
+
+    def consume_token(**_kwargs):
+        nonlocal consumed_tokens
+        consumed_tokens += 1
+        booking.cancellation_token_hash = None
+
+    monkeypatch.setattr(
+        booking_service,
+        "_lock_owned_booking_for_cancellation",
+        lambda **_kwargs: booking,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "_get_cancellation_by_idempotency_key",
+        lambda **_kwargs: state["existing"],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "_latest_cancellation_for_booking",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(booking_service, "get_mock_data_enabled", lambda **_kwargs: True)
+    monkeypatch.setattr(booking_service, "get_owned_deal_record", lambda **_kwargs: deal)
+    monkeypatch.setattr(
+        booking_service,
+        "_get_owned_watch_for_deal",
+        lambda **_kwargs: watch,
+    )
+    monkeypatch.setattr(booking_service, "_require_step_up_auth", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        booking_service,
+        "verify_cancellation_approval_token",
+        lambda **_kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "consume_cancellation_approval_token",
+        consume_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "get_booking_connector",
+        lambda **_kwargs: SimpleNamespace(cancel_booking=cancel_provider),
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "queue_notification",
+        lambda **kwargs: queued_notifications.append(kwargs) or [],
+    )
+    monkeypatch.setattr(booking_service, "_enqueue_notification_tasks", lambda _items: None)
+    db = CancellationSession()
+    request = {
+        "db": db,
+        "user": user,
+        "booking_id": booking.id,
+        "reason": "Changed plans",
+        "approval_token": "signed-cancellation-token",
+        "totp_code": "123456",
+        "master_key_passphrase": "master-secret",
+        "idempotency_key": "cancel-request-123",
+        "token_service": SimpleNamespace(),
+    }
+
+    first = booking_service.cancel_booking(**request)
+    replay = booking_service.cancel_booking(**request)
+
+    assert first.idempotent_replay is False
+    assert replay.idempotent_replay is True
+    assert state["existing"] is not None
+    assert state["existing"].idempotency_key == "cancel-request-123"
+    assert provider_calls == 1
+    assert consumed_tokens == 1
+    assert queued_notifications[0]["simulated"] is True
+
+
+def test_cancellation_rejects_invalid_totp_and_master_key_before_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_settings(monkeypatch)
+    user = _build_user()
+    watch = _build_watch(user=user)
+    deal = Deal(
+        id=uuid4(),
+        watch_id=watch.id,
+        kind="flight",
+        source="live-duffel",
+        total_price=Decimal("640.00"),
+        currency="USD",
+        fingerprint_hash="cancellation-step-up",
+        status=DealStatus.BOOKED,
+    )
+    booking = Booking(
+        id=uuid4(),
+        deal_id=deal.id,
+        provider="duffel",
+        status=BookingStatus.TICKETED,
+        idempotency_key="original-booking-step-up",
+        cancellation_token_hash="token-hash",
+    )
+    provider_calls = 0
+
+    monkeypatch.setattr(
+        booking_service,
+        "_lock_owned_booking_for_cancellation",
+        lambda **_kwargs: booking,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "_get_cancellation_by_idempotency_key",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        booking_service,
+        "_latest_cancellation_for_booking",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(booking_service, "get_mock_data_enabled", lambda **_kwargs: True)
+    monkeypatch.setattr(booking_service, "get_owned_deal_record", lambda **_kwargs: deal)
+    monkeypatch.setattr(
+        booking_service,
+        "_get_owned_watch_for_deal",
+        lambda **_kwargs: watch,
+    )
+
+    def get_connector(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        return SimpleNamespace()
+
+    monkeypatch.setattr(booking_service, "get_booking_connector", get_connector)
+    request = {
+        "db": SimpleNamespace(),
+        "user": user,
+        "booking_id": booking.id,
+        "reason": "Changed plans",
+        "approval_token": "signed-cancellation-token",
+        "master_key_passphrase": "test-master-secret",
+        "idempotency_key": "cancel-step-up-123",
+        "token_service": SimpleNamespace(),
+    }
+
+    monkeypatch.setattr(booking_service, "verify_totp_code", lambda **_kwargs: False)
+    with pytest.raises(AuthenticationError, match="Invalid TOTP"):
+        booking_service.cancel_booking(totp_code="000000", **request)
+
+    monkeypatch.setattr(booking_service, "verify_totp_code", lambda **_kwargs: True)
+    with pytest.raises(AuthenticationError, match="Invalid master key"):
+        booking_service.cancel_booking(
+            totp_code="123456",
+            **{**request, "master_key_passphrase": "wrong-master-secret"},
+        )
+
+    assert provider_calls == 0
 
 
 def test_mock_booking_result_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -367,6 +679,7 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
     db = FakeBookingSession()
     award_calls = 0
     balance_commit_counts: list[int] = []
+    calendar_commit_counts: list[int] = []
     real_award = getattr(tramp_stamp_service, "award_for_live_booking", None)
 
     monkeypatch.setattr(booking_service, "get_mock_data_enabled", lambda *, db: False)
@@ -413,11 +726,11 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
         lambda *, db, key: SimpleNamespace(credentials={}),
     )
     monkeypatch.setattr(booking_service, "queue_notification", lambda **_kwargs: [])
-    monkeypatch.setattr(
-        booking_service,
-        "push_booking_to_calendar",
-        lambda **_kwargs: {"transport": "test"},
-    )
+    def push_calendar(**_kwargs):
+        calendar_commit_counts.append(db.commits)
+        return {"transport": "test"}
+
+    monkeypatch.setattr(booking_service, "push_booking_to_calendar", push_calendar)
     monkeypatch.setattr(booking_service, "consume_approval_token", lambda **_kwargs: None)
     monkeypatch.setattr(
         booking_service,
@@ -495,8 +808,62 @@ def test_live_booking_award_and_idempotent_replay_share_balance(
     assert replay.idempotent_replay is True
     assert award_calls == 1
     assert received_idempotency_keys == ["live-booking-idempotency-key"]
-    assert db.commits == 3
-    assert balance_commit_counts == [2, 3]
+    assert calendar_commit_counts == [3]
+    assert db.commits == 4
+    assert balance_commit_counts == [4, 4]
+
+
+def test_booking_commit_failure_prevents_calendar_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _build_user()
+    watch = _build_watch(user=user)
+    deal = Deal(
+        id=uuid4(),
+        watch_id=watch.id,
+        kind="flight",
+        source="live-amadeus",
+        total_price=Decimal("640.00"),
+        currency="USD",
+        fingerprint_hash="commit-before-calendar",
+        status=DealStatus.BOOKED,
+    )
+    booking = Booking(
+        id=uuid4(),
+        deal_id=deal.id,
+        provider="duffel",
+        status=BookingStatus.TICKETED,
+        idempotency_key="commit-before-calendar",
+        calendar_detail="Calendar sync pending after durable booking commit.",
+    )
+    calendar_calls = 0
+
+    class FailingCommitSession:
+        def commit(self) -> None:
+            raise RuntimeError("durable booking commit failed")
+
+        def add(self, _value: object) -> None:
+            return None
+
+    def push_calendar(**_kwargs):
+        nonlocal calendar_calls
+        calendar_calls += 1
+        return {"transport": "google_calendar", "event_id": "event-1"}
+
+    monkeypatch.setattr(booking_service, "push_booking_to_calendar", push_calendar)
+
+    with pytest.raises(RuntimeError, match="durable booking commit failed"):
+        booking_service._commit_booking_then_sync_calendar(
+            db=FailingCommitSession(),
+            user=user,
+            booking=booking,
+            deal=deal,
+            watch=watch,
+            calendar_connector=SimpleNamespace(),
+            simulated=False,
+        )
+
+    assert calendar_calls == 0
 
 
 def test_list_bookings_reuses_one_stamp_balance(monkeypatch: pytest.MonkeyPatch) -> None:

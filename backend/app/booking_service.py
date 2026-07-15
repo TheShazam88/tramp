@@ -15,9 +15,16 @@ from app.activity_maintenance import acquire_activity_writer_lock
 from app.api.schemas.bookings import (
     BookingAttemptReconciliationResponse,
     BookingResponse,
+    CancellationApprovalTokenResponse,
     CancellationResponse,
 )
-from app.approval_service import consume_approval_token, verify_approval_token
+from app.approval_service import (
+    consume_approval_token,
+    consume_cancellation_approval_token,
+    issue_cancellation_approval_token,
+    verify_approval_token,
+    verify_cancellation_approval_token,
+)
 from app.calendar_service import push_booking_to_calendar, remove_booking_from_calendar
 from app.config import KeyUnlockMode, get_settings
 from app.db.models import (
@@ -46,6 +53,7 @@ from app.integrations.service import (
     get_mock_data_enabled,
     payload_is_simulated,
     provider_is_simulated,
+    source_is_simulated,
 )
 from app.notification_service import (
     list_notification_deliveries_for_booking,
@@ -272,11 +280,13 @@ def approve_and_book(
             recovery_required=True,
         )
 
-    if not mock_data_enabled and (
+    simulated_activity = bool(
         execution_simulated
+        or source_is_simulated(deal.source)
         or provider_is_simulated(provider_result.provider)
         or payload_is_simulated(provider_result.provider_payload)
-    ):
+    )
+    if not mock_data_enabled and simulated_activity:
         booking_attempt.status = BookingAttemptStatus.FAILED
         booking_attempt.recovery_required = True
         booking_attempt.error_text = (
@@ -383,23 +393,7 @@ def approve_and_book(
     message_type = "booking.booked"
     notification_subject = "TRAMP booking confirmed"
     notification_body = f"Your booking for deal {deal.id} has been confirmed."
-    calendar_detail = "Calendar sync not attempted."
-    try:
-        calendar_result = push_booking_to_calendar(
-            db=db,
-            booking=booking,
-            deal=deal,
-            watch=watch,
-            connector=calendar_connector,
-        )
-        calendar_transport = calendar_result.get("transport", "local-safe")
-        calendar_detail = f"Calendar sync complete via {calendar_transport}."
-    except Exception:  # noqa: BLE001
-        logger.exception(
-            "Calendar sync failed for booking attempt %s.",
-            booking_attempt.idempotency_key,
-        )
-        calendar_detail = "Calendar sync failed. Review server logs for details."
+    calendar_detail = "Calendar sync pending after durable booking commit."
     audit_action = "booking.booked"
     deal.status = DealStatus.BOOKED
     watch.status = TripWatchStatus.FULFILLED
@@ -413,6 +407,7 @@ def approve_and_book(
         booking=booking,
         deal=deal,
         integration=notification_integration,
+        simulated=simulated_activity,
     )
     booking.calendar_detail = calendar_detail
 
@@ -448,15 +443,79 @@ def approve_and_book(
         provider_payload=provider_result.provider_payload,
         execution_simulated=execution_simulated,
     )
+    _commit_booking_then_sync_calendar(
+        db=db,
+        user=user,
+        booking=booking,
+        deal=deal,
+        watch=watch,
+        calendar_connector=calendar_connector,
+        simulated=simulated_activity,
+    )
     response = serialize_booking(
         db=db,
         user=user,
         booking=booking,
         tramp_stamps_awarded=stamps_awarded,
     )
-    db.commit()
     _enqueue_notification_tasks(notification_deliveries)
     return response
+
+
+def _commit_booking_then_sync_calendar(
+    *,
+    db: Session,
+    user: User,
+    booking: Booking,
+    deal: Deal,
+    watch: TripWatch,
+    calendar_connector,
+    simulated: bool,
+) -> None:
+    """Commit the booking before attempting any external calendar side effect."""
+
+    db.commit()
+    calendar_result: dict[str, object] | None = None
+    try:
+        calendar_result = push_booking_to_calendar(
+            db=db,
+            booking=booking,
+            deal=deal,
+            watch=watch,
+            connector=calendar_connector,
+            simulated=simulated,
+        )
+        calendar_transport = calendar_result.get("transport", "local-safe")
+        booking.calendar_detail = f"Calendar sync complete via {calendar_transport}."
+    except Exception:  # noqa: BLE001
+        logger.exception("Calendar sync failed for booking %s.", booking.id)
+        booking.calendar_detail = "Calendar sync failed. Review server logs for details."
+
+    db.add(booking)
+    db.add(
+        AuditLog(
+            actor=f"user:{user.id}",
+            action="booking.calendar_sync_recorded",
+            target=f"booking:{booking.id}",
+            at=datetime.now(UTC),
+            meta_json={
+                "deal_id": str(deal.id),
+                "watch_id": str(watch.id),
+                "calendar_detail": booking.calendar_detail,
+                "transport": (
+                    str(calendar_result.get("transport"))
+                    if calendar_result and calendar_result.get("transport")
+                    else None
+                ),
+                "simulated": simulated,
+                "external_side_effect_suppressed": bool(
+                    calendar_result
+                    and calendar_result.get("external_side_effect_suppressed")
+                ),
+            },
+        )
+    )
+    db.commit()
 
 
 def list_bookings(*, db: Session, user: User) -> list[BookingResponse]:
@@ -573,24 +632,97 @@ def reconcile_booking_attempt(
     )
 
 
+def create_cancellation_approval(
+    *,
+    db: Session,
+    user: User,
+    booking_id: UUID,
+    token_service: SignedTokenService,
+) -> CancellationApprovalTokenResponse:
+    acquire_activity_writer_lock(db)
+    booking = _lock_owned_booking_for_cancellation(
+        db=db,
+        user=user,
+        booking_id=booking_id,
+    )
+    if (
+        not get_mock_data_enabled(db=db)
+        and _booking_is_simulated(db=db, booking=booking)
+    ):
+        raise LookupError("Booking not found.")
+    if _latest_cancellation_for_booking(db=db, booking=booking) is not None:
+        raise ConflictError("This booking already has a cancellation record.")
+    deal = get_owned_deal_record(db=db, user=user, deal_id=booking.deal_id)
+    watch = _get_owned_watch_for_deal(db=db, user=user, deal=deal)
+    signed = issue_cancellation_approval_token(
+        booking=booking,
+        deal=deal,
+        watch=watch,
+        user=user,
+        token_service=token_service,
+    )
+    db.add(booking)
+    db.commit()
+    return CancellationApprovalTokenResponse(
+        booking_id=str(booking.id),
+        token=signed.token,
+        expires_at=signed.expires_at,
+    )
+
+
 def cancel_booking(
     *,
     db: Session,
     user: User,
     booking_id: UUID,
     reason: str | None,
+    approval_token: str,
+    totp_code: str,
+    master_key_passphrase: str | None,
+    idempotency_key: str,
+    token_service: SignedTokenService,
 ) -> CancellationResponse:
     acquire_activity_writer_lock(db)
-    booking = _get_owned_booking_or_404(db=db, user=user, booking_id=booking_id)
+    booking = _lock_owned_booking_for_cancellation(
+        db=db,
+        user=user,
+        booking_id=booking_id,
+    )
     mock_data_enabled = get_mock_data_enabled(db=db)
     if not mock_data_enabled and _booking_is_simulated(db=db, booking=booking):
         raise ConflictError("Live cancellation is unavailable while mock data is disabled.")
+    existing_by_key = _get_cancellation_by_idempotency_key(
+        db=db,
+        idempotency_key=idempotency_key,
+    )
+    if existing_by_key is not None:
+        if existing_by_key.booking_id != booking.id:
+            raise ConflictError(
+                "This cancellation key belongs to a different booking.",
+                code="idempotency_conflict",
+            )
+        return serialize_cancellation(existing_by_key, idempotent_replay=True)
+
     deal = get_owned_deal_record(db=db, user=user, deal_id=booking.deal_id)
     watch = _get_owned_watch_for_deal(db=db, user=user, deal=deal)
 
     existing = _latest_cancellation_for_booking(db=db, booking=booking)
     if existing is not None:
-        return serialize_cancellation(existing, idempotent_replay=True)
+        raise ConflictError("This booking already has a cancellation record.")
+
+    _require_step_up_auth(
+        user=user,
+        totp_code=totp_code,
+        master_key_passphrase=master_key_passphrase,
+    )
+    verify_cancellation_approval_token(
+        booking=booking,
+        deal=deal,
+        watch=watch,
+        user=user,
+        token=approval_token,
+        token_service=token_service,
+    )
 
     requested_at = datetime.now(UTC)
     provider_result = get_booking_connector(db=db).cancel_booking(
@@ -598,6 +730,7 @@ def cancel_booking(
         deal=deal,
         reason=reason,
         requested_at=requested_at,
+        idempotency_key=idempotency_key,
     )
     execution_simulated = getattr(provider_result, "simulated", None)
     provider = str(getattr(provider_result, "provider", "") or "").strip()
@@ -605,16 +738,20 @@ def cancel_booking(
         raise ConflictError("Cancellation provider omitted explicit execution provenance.")
     if not provider:
         raise ConflictError("Cancellation provider omitted its provider identifier.")
-    if not mock_data_enabled and (
+    simulated_activity = bool(
         execution_simulated
+        or source_is_simulated(deal.source)
+        or provider_is_simulated(booking.provider)
         or provider_is_simulated(provider)
         or payload_is_simulated(provider_result.provider_payload)
-    ):
+    )
+    if not mock_data_enabled and simulated_activity:
         raise ConflictError("Live cancellation is unavailable while mock data is disabled.")
 
     cancellation = Cancellation(
         booking_id=booking.id,
         reason=reason,
+        idempotency_key=idempotency_key,
         refund_expected=provider_result.refund_expected,
         refund_received=provider_result.refund_received,
         currency=provider_result.currency,
@@ -624,9 +761,7 @@ def cancel_booking(
         execution_simulated=execution_simulated,
         provenance=(
             CancellationProvenance.SIMULATED
-            if execution_simulated
-            or provider_is_simulated(provider)
-            or payload_is_simulated(provider_result.provider_payload)
+            if simulated_activity
             else CancellationProvenance.LIVE
         ),
         prior_booking_status=booking.status,
@@ -641,14 +776,18 @@ def cancel_booking(
     if provider_result.status == CancellationStatus.REFUNDED:
         booking.status = BookingStatus.CANCELLED
         watch.status = TripWatchStatus.ACTIVE
-        if not execution_simulated:
-            try:
-                calendar_result = remove_booking_from_calendar(db=db, booking=booking, deal=deal)
-                calendar_transport = calendar_result.get("transport", "local-safe")
-                booking.calendar_detail = f"Calendar unwind complete via {calendar_transport}."
-            except Exception:  # noqa: BLE001
-                logger.exception("Calendar unwind failed for booking %s.", booking.id)
-                booking.calendar_detail = "Calendar unwind failed. Review server logs for details."
+        try:
+            calendar_result = remove_booking_from_calendar(
+                db=db,
+                booking=booking,
+                deal=deal,
+                simulated=simulated_activity,
+            )
+            calendar_transport = calendar_result.get("transport", "local-safe")
+            booking.calendar_detail = f"Calendar unwind complete via {calendar_transport}."
+        except Exception:  # noqa: BLE001
+            logger.exception("Calendar unwind failed for booking %s.", booking.id)
+            booking.calendar_detail = "Calendar unwind failed. Review server logs for details."
         if provider_result.refund_received > 0:
             db.add(
                 SpendLedger(
@@ -679,8 +818,10 @@ def cancel_booking(
         booking=booking,
         deal=deal,
         cancellation=cancellation,
+        simulated=simulated_activity,
     )
 
+    consume_cancellation_approval_token(booking=booking)
     db.add_all([booking, watch, cancellation])
     db.add(
         AuditLog(
@@ -697,6 +838,7 @@ def cancel_booking(
                 "reason": reason,
                 "status": provider_result.status.value,
                 "provider_correlation_id": provider_result.provider_correlation_id,
+                "idempotency_key": idempotency_key,
             },
         )
     )
@@ -1132,6 +1274,39 @@ def _get_owned_payment_method_or_404(
     if payment_method is None:
         raise LookupError("Payment method not found.")
     return payment_method
+
+
+def _lock_owned_booking_for_cancellation(
+    *,
+    db: Session,
+    user: User,
+    booking_id: UUID,
+) -> Booking:
+    booking = db.scalar(
+        select(Booking)
+        .join(Deal, Deal.id == Booking.deal_id)
+        .join(TripWatch, TripWatch.id == Deal.watch_id)
+        .where(
+            Booking.id == booking_id,
+            TripWatch.user_id == user.id,
+        )
+        .with_for_update(of=Booking)
+    )
+    if booking is None:
+        raise LookupError("Booking not found.")
+    return booking
+
+
+def _get_cancellation_by_idempotency_key(
+    *,
+    db: Session,
+    idempotency_key: str,
+) -> Cancellation | None:
+    return db.scalar(
+        select(Cancellation).where(
+            Cancellation.idempotency_key == idempotency_key,
+        )
+    )
 
 
 def _get_owned_booking_or_404(*, db: Session, user: User, booking_id: UUID) -> Booking:

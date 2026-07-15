@@ -16,6 +16,8 @@ import type {
   BookingAttemptReconciliation,
   BookingSummary,
   BookingsViewData,
+  CancelBookingRequest,
+  CancellationResult,
   CurrentUser,
   DashboardData,
   DealData,
@@ -454,6 +456,7 @@ interface BookingAttemptReconciliationRaw {
 
 interface CancellationRaw {
   id?: string;
+  booking_id?: string | null;
   reason?: string | null;
   refund_expected?: number | string | null;
   refund_received?: number | string | null;
@@ -461,6 +464,7 @@ interface CancellationRaw {
   status?: string | null;
   requested_at?: string | null;
   resolved_at?: string | null;
+  idempotent_replay?: boolean | null;
 }
 
 interface LiveDealResponseRaw extends SearchNowDealRaw {
@@ -2697,6 +2701,61 @@ export const travelWatchApi = {
     return {
       token: coerceString(response.token),
       expiresAt: coerceString(response.expires_at) || "",
+    };
+  },
+
+  createCancellationApprovalToken: async (bookingId: string) => {
+    if (useMockData) {
+      return withLatency({
+        token: "mock-cancellation-approval-token",
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      });
+    }
+
+    const response = await apiClient.post<{
+      token?: string | null;
+      expires_at?: string | null;
+    }>(
+      `/bookings/${encodeURIComponent(bookingId)}/cancellation-approval-token`,
+      {},
+    );
+    return {
+      token: coerceString(response.token),
+      expiresAt: coerceString(response.expires_at),
+    };
+  },
+
+  cancelBooking: async (
+    payload: CancelBookingRequest,
+  ): Promise<CancellationResult> => {
+    if (useMockData) {
+      return withLatency({
+        bookingId: payload.bookingId,
+        status: "refunded",
+        refundAmount: undefined,
+        idempotentReplay: false,
+      });
+    }
+
+    const response = await apiClient.post<CancellationRaw>(
+      `/bookings/${encodeURIComponent(payload.bookingId)}/cancel`,
+      {
+        reason: payload.reason || undefined,
+        approval_token: payload.approvalToken,
+        totp_code: payload.totpCode,
+        master_key_passphrase: payload.masterKeyPassphrase || undefined,
+        idempotency_key: payload.idempotencyKey,
+      },
+    );
+    const currency = coerceString(response.currency) || "USD";
+    return {
+      bookingId: coerceString(response.booking_id) || payload.bookingId,
+      status: coerceString(response.status) || "requested",
+      refundAmount:
+        formatMoneyValue(response.refund_received, currency) ||
+        formatMoneyValue(response.refund_expected, currency) ||
+        undefined,
+      idempotentReplay: response.idempotent_replay === true,
     };
   },
 

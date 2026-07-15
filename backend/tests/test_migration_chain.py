@@ -47,10 +47,14 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_ROOT = BACKEND_ROOT / "alembic" / "versions"
 POSTGRES_RUNNER = BACKEND_ROOT / "scripts" / "test-migrations.sh"
 INITIAL_REVISION = MIGRATION_ROOT / "20260629_0001_initial_schema.py"
+STAMP_REVISION = MIGRATION_ROOT / "20260710_0004_tramp_stamps.py"
 RECOVERY_REVISION = MIGRATION_ROOT / "20260710_0007_booking_recovery_required.py"
 PROVENANCE_REVISION = MIGRATION_ROOT / "20260710_0008_cancellation_provenance.py"
 CANCELLATION_CLASSIFICATION_REVISION = (
     MIGRATION_ROOT / "20260710_0009_cancellation_classification.py"
+)
+CANCELLATION_SECURITY_REVISION = (
+    MIGRATION_ROOT / "20260715_0010_cancellation_security.py"
 )
 
 PRE_V2_TABLES = {
@@ -187,6 +191,15 @@ def test_0007_safe_pre_provider_allowlist_is_explicit() -> None:
     assert _safe_pre_provider_codes() == ("deal_expired",)
 
 
+def test_0004_downgrade_restores_historical_notification_enum_labels() -> None:
+    downgrade_source = STAMP_REVISION.read_text().split("def downgrade() -> None:", 1)[1]
+
+    assert "('LOG_ONLY', 'SMTP_DEV', 'TELEGRAM_BOT')" in downgrade_source
+    assert "('PENDING', 'SENT', 'FAILED')" in downgrade_source
+    assert "USING upper(transport)::notification_transport" in downgrade_source
+    assert "USING upper(status)::notification_delivery_status" in downgrade_source
+
+
 def test_0008_cancellation_provenance_is_fully_reversible() -> None:
     added_tables = set(_migration_operations(PROVENANCE_REVISION, "add_column"))
     added_columns = set(_migration_column_names(PROVENANCE_REVISION, "add_column"))
@@ -217,6 +230,23 @@ def test_0009_cancellation_classification_is_reversible() -> None:
     assert 'down_revision = "20260710_0008"' in source
     assert 'op.add_column("cancellations"' in source
     assert 'op.drop_column("cancellations", "provenance")' in source
+
+
+def test_0010_cancellation_security_is_fully_reversible() -> None:
+    source = CANCELLATION_SECURITY_REVISION.read_text()
+    added_columns = set(
+        _migration_column_names(CANCELLATION_SECURITY_REVISION, "add_column")
+    )
+    dropped_columns = set(
+        _migration_column_names(CANCELLATION_SECURITY_REVISION, "drop_column")
+    )
+
+    assert 'revision = "20260715_0010"' in source
+    assert 'down_revision = "20260710_0009"' in source
+    assert added_columns == {"cancellation_token_hash", "idempotency_key"}
+    assert dropped_columns == added_columns
+    assert "uq_cancellations_idempotency_key" in source
+    assert 'op.drop_constraint(' in source
 
 
 def _migration_database_url() -> str:
@@ -429,8 +459,8 @@ def _seed_operational_rows(database_url: str) -> dict[str, UUID]:
                 )
             )
             db.flush()
-            db.add(
-                Booking(
+            db.execute(
+                Booking.__table__.insert().values(
                     id=ids["booking"],
                     deal_id=ids["deal"],
                     provider="migration-test",
@@ -516,7 +546,7 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _enum_labels(database_url, "integration_environment") == ["TEST", "LIVE"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260710_0009"
+    assert _revision(database_url) == "20260715_0010"
     assert "tramp_stamp_ledger" in _table_names(database_url)
     assert "PENDING_TICKETING" not in _enum_labels(
         database_url, "booking_attempt_status"
@@ -547,7 +577,7 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _table_names(database_url) == ["alembic_version"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260710_0009"
+    assert _revision(database_url) == "20260715_0010"
 
 
 def test_0009_backfills_simulated_parent_and_marks_live_parent_unknown() -> None:
@@ -759,7 +789,7 @@ def test_0005_cleans_interrupted_concurrent_index_before_retry() -> None:
 
     _run_alembic(database_url, "upgrade", "head")
 
-    assert _revision(database_url) == "20260710_0009"
+    assert _revision(database_url) == "20260715_0010"
     assert temporary_index not in _index_names(database_url, "booking_attempts")
     assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
         database_url,
@@ -1031,5 +1061,25 @@ def test_0003_stamp_round_trip_preserves_seeded_data() -> None:
     _assert_operational_rows(database_url, rows)
     _run_alembic(database_url, "downgrade", "20260630_0003")
     _assert_operational_rows(database_url, rows)
+    assert _enum_labels(database_url, "notification_transport") == [
+        "LOG_ONLY",
+        "SMTP_DEV",
+        "TELEGRAM_BOT",
+    ]
+    assert _enum_labels(database_url, "notification_delivery_status") == [
+        "PENDING",
+        "SENT",
+        "FAILED",
+    ]
     _run_alembic(database_url, "upgrade", "20260710_0004")
     _assert_operational_rows(database_url, rows)
+    assert _enum_labels(database_url, "notification_transport") == [
+        "log_only",
+        "smtp_dev",
+        "telegram_bot",
+    ]
+    assert _enum_labels(database_url, "notification_delivery_status") == [
+        "pending",
+        "sent",
+        "failed",
+    ]

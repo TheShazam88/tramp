@@ -225,6 +225,22 @@ export interface BookDealRequest {
   idempotencyKey: string;
 }
 
+export interface CancelBookingRequest {
+  bookingId: string;
+  reason: string;
+  approvalToken: string;
+  totpCode: string;
+  masterKeyPassphrase: string;
+  idempotencyKey: string;
+}
+
+export interface CancellationResult {
+  bookingId: string;
+  status: string;
+  refundAmount?: string;
+  idempotentReplay: boolean;
+}
+
 export interface DealIntentResult {
   dealId: string;
   status: string;

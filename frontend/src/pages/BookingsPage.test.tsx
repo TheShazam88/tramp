@@ -19,6 +19,7 @@ const bookings: BookingsViewData = {
       amount: "JPY 118,400",
       provider: "Duffel",
       actions: ["View itinerary"],
+      bookingStatus: "ticketed",
       dealId: "deal-1",
       watchId: "watch-1",
       disruptions: [
@@ -61,6 +62,16 @@ describe("BookingsPage local test tools", () => {
     );
     vi.spyOn(travelWatchApi, "triggerBookingDisruption").mockResolvedValue();
     vi.spyOn(travelWatchApi, "resolveDisruption").mockResolvedValue();
+    vi.spyOn(travelWatchApi, "createCancellationApprovalToken").mockResolvedValue({
+      token: "signed-cancellation-token",
+      expiresAt: "2030-01-01T00:00:00Z",
+    });
+    vi.spyOn(travelWatchApi, "cancelBooking").mockResolvedValue({
+      bookingId: "booking-1",
+      status: "refunded",
+      refundAmount: "JPY 118,400",
+      idempotentReplay: false,
+    });
   });
 
   it("keeps normal actions visible and runs disruption tools only after disclosure", async () => {
@@ -98,5 +109,75 @@ describe("BookingsPage local test tools", () => {
         "disruption-open",
       );
     });
+  });
+
+  it("requires signed token, TOTP, master key, and stable idempotency for cancellation", async () => {
+    const { user } = renderBookings();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Secure cancellation" }),
+    );
+    await user.type(screen.getByLabelText("Cancellation reason"), "Changed plans");
+    await user.type(screen.getByLabelText("Cancellation TOTP code"), "123456");
+    await user.type(
+      screen.getByLabelText("Cancellation master-key passphrase"),
+      "master-secret",
+    );
+    await user.click(screen.getByRole("button", { name: "Confirm cancellation" }));
+
+    await waitFor(() => {
+      expect(travelWatchApi.createCancellationApprovalToken).toHaveBeenCalledWith(
+        "booking-1",
+      );
+      expect(travelWatchApi.cancelBooking).toHaveBeenCalledWith({
+        bookingId: "booking-1",
+        reason: "Changed plans",
+        approvalToken: "signed-cancellation-token",
+        totpCode: "123456",
+        masterKeyPassphrase: "master-secret",
+        idempotencyKey: expect.any(String),
+      });
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Cancellation refunded",
+    );
+  });
+
+  it("reuses the cancellation token and key after an ambiguous response", async () => {
+    vi.mocked(travelWatchApi.cancelBooking)
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({
+        bookingId: "booking-1",
+        status: "refunded",
+        refundAmount: "JPY 118,400",
+        idempotentReplay: true,
+      });
+    const { user } = renderBookings();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Secure cancellation" }),
+    );
+    await user.type(screen.getByLabelText("Cancellation TOTP code"), "123456");
+    await user.type(
+      screen.getByLabelText("Cancellation master-key passphrase"),
+      "master-secret",
+    );
+    await user.click(screen.getByRole("button", { name: "Confirm cancellation" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to fetch");
+
+    await user.type(screen.getByLabelText("Cancellation TOTP code"), "654321");
+    await user.type(
+      screen.getByLabelText("Cancellation master-key passphrase"),
+      "retry-secret",
+    );
+    await user.click(screen.getByRole("button", { name: "Confirm cancellation" }));
+    await screen.findByRole("status");
+
+    const requests = vi.mocked(travelWatchApi.cancelBooking).mock.calls.map(
+      ([request]) => request,
+    );
+    expect(travelWatchApi.createCancellationApprovalToken).toHaveBeenCalledTimes(1);
+    expect(requests[1]?.idempotencyKey).toBe(requests[0]?.idempotencyKey);
+    expect(requests[1]?.approvalToken).toBe(requests[0]?.approvalToken);
   });
 });

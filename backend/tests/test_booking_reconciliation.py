@@ -6,8 +6,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
+from sqlalchemy.dialects import postgresql
 
-from app import booking_service
+from app import booking_service, disruption_service
 from app.api.routes import bookings as booking_routes
 from app.api.routes.bookings import _map_service_error
 from app.api.schemas import bookings as booking_schemas
@@ -17,6 +19,9 @@ from app.db.models import (
     BookingAttemptStatus,
     Deal,
     DealStatus,
+    Disruption,
+    DisruptionStatus,
+    DisruptionType,
     PaymentMethod,
     TripWatch,
     User,
@@ -105,6 +110,23 @@ def test_reconciliation_schema_exposes_only_sanitized_attempt_state() -> None:
     assert "provider-secret" not in response.model_dump_json()
 
 
+def test_cancellation_request_fails_closed_without_step_up_fields() -> None:
+    with pytest.raises(ValidationError):
+        booking_schemas.CancellationCreateRequest(reason="Changed plans")
+
+    request = booking_schemas.CancellationCreateRequest(
+        reason="Changed plans",
+        approval_token="x" * 32,
+        totp_code="123456",
+        master_key_passphrase="master-secret",
+        idempotency_key="cancel-request-123",
+    )
+
+    assert request.approval_token == "x" * 32
+    assert request.totp_code == "123456"
+    assert request.idempotency_key == "cancel-request-123"
+
+
 def test_reconciliation_route_uses_authenticated_user_without_approval_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -141,6 +163,82 @@ def test_reconciliation_route_uses_authenticated_user_without_approval_token(
     assert len(calls) == 1
     assert calls[0]["user"] is user
     assert calls[0]["idempotency_key"] == "attempt-key-123"
+
+
+def test_cancellation_routes_forward_signed_step_up_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = User(id=uuid4(), email="owner@example.com", password_hash="hashed")
+    booking_id = uuid4()
+    token_service = SimpleNamespace()
+    token_response = booking_schemas.CancellationApprovalTokenResponse(
+        booking_id=str(booking_id),
+        token="signed-token-" + ("x" * 32),
+        expires_at=datetime.now(UTC),
+    )
+    cancellation_response = booking_schemas.CancellationResponse(
+        id=str(uuid4()),
+        booking_id=str(booking_id),
+        reason="Changed plans",
+        refund_expected=0,
+        refund_received=0,
+        currency="USD",
+        status="requested",
+        requested_at=datetime.now(UTC),
+        resolved_at=None,
+    )
+    token_calls: list[dict[str, object]] = []
+    cancellation_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        booking_routes,
+        "create_cancellation_approval",
+        lambda **kwargs: token_calls.append(kwargs) or token_response,
+    )
+    monkeypatch.setattr(
+        booking_routes,
+        "cancel_booking",
+        lambda **kwargs: cancellation_calls.append(kwargs) or cancellation_response,
+    )
+
+    issued = asyncio.run(
+        booking_routes.create_cancellation_approval_token_record(
+            booking_id=booking_id,
+            current_user=user,
+            db=SimpleNamespace(),
+            token_service=token_service,
+        )
+    )
+    cancelled = asyncio.run(
+        booking_routes.cancel_booking_record(
+            booking_id=booking_id,
+            payload=booking_schemas.CancellationCreateRequest(
+                reason="Changed plans",
+                approval_token="x" * 32,
+                totp_code="123456",
+                master_key_passphrase="master-secret",
+                idempotency_key="cancel-request-123",
+            ),
+            current_user=user,
+            db=SimpleNamespace(),
+            token_service=token_service,
+        )
+    )
+
+    assert issued is token_response
+    assert cancelled is cancellation_response
+    assert token_calls[0]["user"] is user
+    assert token_calls[0]["token_service"] is token_service
+    assert cancellation_calls[0] == {
+        "db": cancellation_calls[0]["db"],
+        "user": user,
+        "booking_id": booking_id,
+        "reason": "Changed plans",
+        "approval_token": "x" * 32,
+        "totp_code": "123456",
+        "master_key_passphrase": "master-secret",
+        "idempotency_key": "cancel-request-123",
+        "token_service": token_service,
+    }
 
 
 def test_reconciliation_is_user_scoped_and_hides_provider_error(
@@ -348,3 +446,55 @@ def test_attempt_conflict_codes_are_stable(
     assert code == expected_code
     assert message
     assert actual_safe_to_retry is safe_to_retry
+
+
+def test_cross_user_disruption_resolution_is_denied() -> None:
+    disruption = Disruption(
+        id=uuid4(),
+        booking_id=uuid4(),
+        type=DisruptionType.SCHEDULE_CHANGE,
+        status=DisruptionStatus.NEW,
+        detected_at=datetime.now(UTC),
+    )
+    other_user = User(id=uuid4(), email="other@example.com", password_hash="hashed")
+
+    class CrossUserSession:
+        def __init__(self) -> None:
+            self.commits = 0
+
+        def scalar(self, statement):
+            sql = str(
+                statement.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+            if (
+                "JOIN bookings" in sql
+                and "JOIN deals" in sql
+                and "JOIN trip_watches" in sql
+                and "trip_watches.user_id" in sql
+            ):
+                return None
+            return disruption
+
+        def add(self, _value: object) -> None:
+            return None
+
+        def commit(self) -> None:
+            self.commits += 1
+
+        def refresh(self, _value: object) -> None:
+            return None
+
+    db = CrossUserSession()
+
+    with pytest.raises(LookupError, match="Disruption not found"):
+        disruption_service.resolve_disruption(
+            db=db,
+            disruption_id=disruption.id,
+            user=other_user,
+        )
+
+    assert disruption.status == DisruptionStatus.NEW
+    assert db.commits == 0

@@ -685,6 +685,7 @@ class Booking(UUIDPrimaryKeyMixin, Base):
     ticketing_state: Mapped[str | None] = mapped_column(String(64))
     calendar_event_id: Mapped[str | None] = mapped_column(String(255))
     calendar_detail: Mapped[str | None] = mapped_column(Text)
+    cancellation_token_hash: Mapped[str | None] = mapped_column(String(255))
     booked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_text: Mapped[str | None] = mapped_column(Text)
 
@@ -746,6 +747,12 @@ class BookingAttempt(UUIDPrimaryKeyMixin, Base):
 
 class Cancellation(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "cancellations"
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_cancellations_idempotency_key",
+        ),
+    )
 
     booking_id: Mapped[UUID] = mapped_column(
         SQLUUID(as_uuid=True),
@@ -754,6 +761,7 @@ class Cancellation(UUIDPrimaryKeyMixin, Base):
         index=True,
     )
     reason: Mapped[str | None] = mapped_column(String(255))
+    idempotency_key: Mapped[str | None] = mapped_column(String(255))
     refund_expected: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     refund_received: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     currency: Mapped[str | None] = mapped_column(String(3))
@@ -820,6 +828,10 @@ class TrampStampLedger(UUIDPrimaryKeyMixin, Base):
         CheckConstraint(
             "amount = 1",
             name=conv("ck_tramp_stamp_ledger_single_stamp"),
+        ),
+        CheckConstraint(
+            "reason = 'live_booking_completed'",
+            name=conv("ck_tramp_stamp_ledger_reason"),
         ),
     )
 

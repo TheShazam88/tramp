@@ -45,6 +45,16 @@ def test_stamp_ledger_records_single_stamp_reason() -> None:
     assert award.reason == "live_booking_completed"
 
 
+def test_stamp_ledger_constrains_the_only_valid_reason() -> None:
+    check_sql = {
+        str(constraint.sqltext)
+        for constraint in TrampStampLedger.__table__.constraints
+        if hasattr(constraint, "sqltext")
+    }
+
+    assert "reason = 'live_booking_completed'" in check_sql
+
+
 def test_stamp_balance_returns_sum() -> None:
     db = FakeScalarSession(scalar_result=3)
 

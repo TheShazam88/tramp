@@ -1244,7 +1244,7 @@ def test_calendar_and_notification_use_preresolved_dependencies_after_claim(
         result = future.result()
 
     assert not isinstance(result, Exception)
-    assert commit_stages == ["claim", "commit", "commit"]
+    assert commit_stages == ["claim", "commit", "commit", "commit"]
     assert connector.received_idempotency_keys == [idempotency_key]
     with Session(postgres_engine) as verify_db:
         booking = verify_db.scalar(

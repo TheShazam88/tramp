@@ -338,9 +338,9 @@ describe("DealReviewPage booking execution", () => {
     );
 
     await screen.findByText(/Opened from a secure notification link\./);
-    const paymentMethod = await screen.findByLabelText("Saved payment method");
+    const totpCode = await screen.findByLabelText("Six-digit TOTP code");
 
-    await waitFor(() => expect(paymentMethod).toHaveFocus());
+    await waitFor(() => expect(totpCode).toHaveFocus());
     expect(screen.getByRole("button", { name: "Hide booking form" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Book now" })).toBeDisabled();
     expect(travelWatchApi.bookDeal).not.toHaveBeenCalled();

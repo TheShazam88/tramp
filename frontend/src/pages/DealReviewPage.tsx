@@ -512,11 +512,7 @@ export function DealReviewPage() {
       return;
     }
 
-    const focusTarget =
-      paymentMethodInputRef.current && !paymentMethodInputRef.current.disabled
-        ? paymentMethodInputRef.current
-        : totpInputRef.current;
-    focusTarget?.focus();
+    totpInputRef.current?.focus();
   }, [data, linkedApprovalVerified, profileWorkspace, showApprovalForm]);
 
   useEffect(() => {

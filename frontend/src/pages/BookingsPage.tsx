@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
 
 import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
+import type { CancelBookingRequest } from "@/api/types";
 import {
   Badge,
   Button,
@@ -11,6 +13,20 @@ import {
 
 export function BookingsPage() {
   const queryClient = useQueryClient();
+  const [cancellationBookingId, setCancellationBookingId] = useState<string | null>(null);
+  const [cancellationReason, setCancellationReason] = useState("");
+  const [cancellationTotpCode, setCancellationTotpCode] = useState("");
+  const [cancellationMasterKey, setCancellationMasterKey] = useState("");
+  const [cancellationNotice, setCancellationNotice] = useState<{
+    tone: "value" | "alert";
+    message: string;
+  } | null>(null);
+  const cancellationRequestRef = useRef<CancelBookingRequest | null>(null);
+  const cancellationTokenRef = useRef<{ bookingId: string; token: string } | null>(null);
+  const cancellationIdempotencyRef = useRef<{
+    bookingId: string;
+    key: string;
+  } | null>(null);
   const { data } = useQuery({
     queryKey: queryKeys.bookings,
     queryFn: travelWatchApi.getBookings,
@@ -25,6 +41,59 @@ export function BookingsPage() {
     mutationFn: travelWatchApi.resolveDisruption,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.bookings });
+    },
+  });
+  const cancellationMutation = useMutation({
+    mutationFn: async () => {
+      const request = cancellationRequestRef.current;
+      if (!request) {
+        throw new Error("Secure cancellation details expired. Re-enter them and try again.");
+      }
+      let token = cancellationTokenRef.current;
+      if (!token || token.bookingId !== request.bookingId) {
+        const issued = await travelWatchApi.createCancellationApprovalToken(
+          request.bookingId,
+        );
+        if (!issued.token) {
+          throw new Error("Unable to create a secure cancellation approval token.");
+        }
+        token = { bookingId: request.bookingId, token: issued.token };
+        cancellationTokenRef.current = token;
+      }
+      return travelWatchApi.cancelBooking({
+        ...request,
+        approvalToken: token.token,
+      });
+    },
+    retry: false,
+    onSuccess: async (result) => {
+      const refund = result.refundAmount ? ` Refund: ${result.refundAmount}.` : "";
+      setCancellationNotice({
+        tone: "value",
+        message: `Cancellation ${result.status.replace(/_/g, " ")}.${refund}`,
+      });
+      setCancellationBookingId(null);
+      setCancellationReason("");
+      cancellationTokenRef.current = null;
+      cancellationIdempotencyRef.current = null;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+      ]);
+    },
+    onError: (error) => {
+      setCancellationNotice({
+        tone: "alert",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to complete secure cancellation.",
+      });
+    },
+    onSettled: () => {
+      cancellationRequestRef.current = null;
+      setCancellationTotpCode("");
+      setCancellationMasterKey("");
     },
   });
 
@@ -45,12 +114,27 @@ export function BookingsPage() {
       />
 
       {data.fallbackNote ? <div className="notice notice-value">{data.fallbackNote}</div> : null}
+      {cancellationNotice ? (
+        <div
+          className={`notice ${
+            cancellationNotice.tone === "alert" ? "notice-alert" : "notice-value"
+          }`}
+          role={cancellationNotice.tone === "alert" ? "alert" : "status"}
+        >
+          {cancellationNotice.message}
+        </div>
+      ) : null}
 
       <div className="stack">
         {data.items.map((booking) => {
           const unresolvedDisruption = booking.disruptions?.find(
             (disruption) => disruption.status !== "resolved",
           );
+          const cancellationAvailable =
+            !booking.cancellationStatus &&
+            ["booked", "ticketed"].includes(
+              (booking.bookingStatus ?? "").toLowerCase(),
+            );
 
           return (
             <Surface key={booking.id} className="watch-card">
@@ -117,7 +201,120 @@ export function BookingsPage() {
                       {action}
                     </Button>
                   ))}
+                {cancellationAvailable ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      const opening = cancellationBookingId !== booking.id;
+                      setCancellationBookingId(opening ? booking.id : null);
+                      setCancellationReason("");
+                      setCancellationTotpCode("");
+                      setCancellationMasterKey("");
+                      setCancellationNotice(null);
+                      cancellationRequestRef.current = null;
+                      if (
+                        opening &&
+                        cancellationIdempotencyRef.current?.bookingId !== booking.id
+                      ) {
+                        cancellationTokenRef.current = null;
+                        cancellationIdempotencyRef.current = null;
+                      }
+                    }}
+                    disabled={cancellationMutation.isPending}
+                  >
+                    {cancellationBookingId === booking.id
+                      ? "Hide cancellation"
+                      : "Secure cancellation"}
+                  </Button>
+                ) : null}
               </div>
+
+              {cancellationBookingId === booking.id ? (
+                <Surface className="inset-card">
+                  <SectionHeading
+                    eyebrow="Money-moving action"
+                    title="Confirm cancellation"
+                    description="Cancellation requires a signed single-use approval, your TOTP code, and the master key when the backend uses master-key mode."
+                  />
+                  <div className="form-grid">
+                    <label className="field-stack field-span-full">
+                      <span>Cancellation reason</span>
+                      <input
+                        className="text-input"
+                        value={cancellationReason}
+                        maxLength={255}
+                        onChange={(event) =>
+                          setCancellationReason(event.target.value)
+                        }
+                        disabled={cancellationMutation.isPending}
+                      />
+                    </label>
+                    <label className="field-stack">
+                      <span>Cancellation TOTP code</span>
+                      <input
+                        className="text-input"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        value={cancellationTotpCode}
+                        onChange={(event) =>
+                          setCancellationTotpCode(
+                            event.target.value.replace(/\D/g, "").slice(0, 6),
+                          )
+                        }
+                        disabled={cancellationMutation.isPending}
+                      />
+                    </label>
+                    <label className="field-stack">
+                      <span>Cancellation master-key passphrase</span>
+                      <input
+                        className="text-input"
+                        type="password"
+                        autoComplete="new-password"
+                        spellCheck={false}
+                        value={cancellationMasterKey}
+                        onChange={(event) =>
+                          setCancellationMasterKey(event.target.value)
+                        }
+                        disabled={cancellationMutation.isPending}
+                      />
+                    </label>
+                  </div>
+                  <div className="button-row">
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        let idempotency =
+                          cancellationIdempotencyRef.current;
+                        if (!idempotency || idempotency.bookingId !== booking.id) {
+                          idempotency = {
+                            bookingId: booking.id,
+                            key: crypto.randomUUID(),
+                          };
+                          cancellationIdempotencyRef.current = idempotency;
+                        }
+                        cancellationRequestRef.current = {
+                          bookingId: booking.id,
+                          reason: cancellationReason,
+                          approvalToken: "",
+                          totpCode: cancellationTotpCode,
+                          masterKeyPassphrase: cancellationMasterKey,
+                          idempotencyKey: idempotency.key,
+                        };
+                        cancellationMutation.mutate();
+                      }}
+                      disabled={
+                        cancellationMutation.isPending ||
+                        !/^\d{6}$/.test(cancellationTotpCode)
+                      }
+                    >
+                      {cancellationMutation.isPending
+                        ? "Cancelling..."
+                        : "Confirm cancellation"}
+                    </Button>
+                  </div>
+                </Surface>
+              ) : null}
 
               <details className="form-disclosure">
                 <summary>Local test tools</summary>

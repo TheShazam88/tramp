@@ -228,6 +228,7 @@ class LocalBookingConnector:
         deal: Deal,
         reason: str | None,
         requested_at: datetime,
+        idempotency_key: str | None = None,
     ) -> CancellationExecutionResult:
         result = DeterministicMockAdapter().cancel_booking(
             booking=booking,
@@ -244,7 +245,11 @@ class LocalBookingConnector:
             currency=result.currency,
             resolved_at=result.resolved_at,
             provider_correlation_id=f"{booking.provider}:{booking.provider_booking_ref}",
-            provider_payload={"simulated": True, "connector": self.connector_name},
+            provider_payload={
+                "simulated": True,
+                "connector": self.connector_name,
+                "idempotency_key": idempotency_key,
+            },
         )
 
     def test_connection(self) -> ConnectionTestResult:

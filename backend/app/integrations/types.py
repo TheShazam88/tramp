@@ -189,6 +189,7 @@ class BookingConnector(Protocol):
         deal: Deal,
         reason: str | None,
         requested_at: datetime,
+        idempotency_key: str,
     ) -> CancellationExecutionResult: ...
 
     def test_connection(self) -> ConnectionTestResult: ...

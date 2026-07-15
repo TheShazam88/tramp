@@ -14,7 +14,20 @@ def push_booking_to_calendar(
     deal: Deal,
     watch: TripWatch,
     connector: CalendarConnector | None = None,
+    simulated: bool = False,
 ) -> dict[str, object]:
+    if simulated:
+        synthetic_id = f"logonly-{booking.id}"
+        booking.calendar_event_id = synthetic_id
+        return {
+            "event_id": synthetic_id,
+            "transport": "log_only",
+            "simulated": True,
+            "external_side_effect_suppressed": True,
+            "booking_id": str(booking.id),
+            "deal_id": str(deal.id),
+            "watch_id": str(watch.id),
+        }
     resolved_connector = connector or get_calendar_connector(
         db=db,
         allow_disabled=True,
@@ -37,9 +50,24 @@ def push_booking_to_calendar(
     return result
 
 
-def remove_booking_from_calendar(*, db, booking: Booking, deal: Deal) -> dict[str, object]:
+def remove_booking_from_calendar(
+    *,
+    db,
+    booking: Booking,
+    deal: Deal,
+    simulated: bool = False,
+) -> dict[str, object]:
     if not booking.calendar_event_id:
         return {"skipped": True, "reason": "No calendar event to remove."}
+    if simulated:
+        return {
+            "event_id": booking.calendar_event_id,
+            "transport": "log_only",
+            "simulated": True,
+            "external_side_effect_suppressed": True,
+            "booking_id": str(booking.id),
+            "deal_id": str(deal.id),
+        }
     connector = get_calendar_connector(db=db, allow_disabled=True)
     return connector.cancel_event(
         event_id=booking.calendar_event_id,

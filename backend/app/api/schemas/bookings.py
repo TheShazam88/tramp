@@ -41,6 +41,23 @@ class BookingConflictDetail(BaseModel):
 
 class CancellationCreateRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=255)
+    approval_token: str = Field(min_length=32)
+    totp_code: str = Field(min_length=6, max_length=6)
+    master_key_passphrase: str | None = Field(default=None, min_length=1, max_length=512)
+    idempotency_key: str = Field(min_length=8, max_length=255)
+
+    @field_validator("totp_code")
+    @classmethod
+    def validate_totp_code(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("TOTP code must be numeric.")
+        return value
+
+
+class CancellationApprovalTokenResponse(BaseModel):
+    booking_id: str
+    token: str
+    expires_at: datetime
 
 
 class CancellationResponse(BaseModel):

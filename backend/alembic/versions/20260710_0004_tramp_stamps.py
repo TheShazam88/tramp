@@ -56,6 +56,10 @@ def upgrade() -> None:
             "amount = 1",
             name=op.f("ck_tramp_stamp_ledger_single_stamp"),
         ),
+        sa.CheckConstraint(
+            "reason = 'live_booking_completed'",
+            name=op.f("ck_tramp_stamp_ledger_reason"),
+        ),
         sa.ForeignKeyConstraint(
             ["booking_id"],
             ["bookings.id"],
@@ -85,3 +89,26 @@ def downgrade() -> None:
         table_name="tramp_stamp_ledger",
     )
     op.drop_table("tramp_stamp_ledger")
+
+    op.execute(
+        "ALTER TABLE notification_deliveries "
+        "ALTER COLUMN transport TYPE text USING transport::text, "
+        "ALTER COLUMN status TYPE text USING status::text"
+    )
+    op.execute("DROP TYPE notification_transport")
+    op.execute("DROP TYPE notification_delivery_status")
+    op.execute(
+        "CREATE TYPE notification_transport AS ENUM "
+        "('LOG_ONLY', 'SMTP_DEV', 'TELEGRAM_BOT')"
+    )
+    op.execute(
+        "CREATE TYPE notification_delivery_status AS ENUM "
+        "('PENDING', 'SENT', 'FAILED')"
+    )
+    op.execute(
+        "ALTER TABLE notification_deliveries "
+        "ALTER COLUMN transport TYPE notification_transport "
+        "USING upper(transport)::notification_transport, "
+        "ALTER COLUMN status TYPE notification_delivery_status "
+        "USING upper(status)::notification_delivery_status"
+    )

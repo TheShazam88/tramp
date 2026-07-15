@@ -668,7 +668,7 @@ def test_preview_and_execute_remove_only_simulated_activity(db: Session) -> None
         user_id=live_user.id,
         booking_id=live_booking.id,
         amount=1,
-        reason="live_booking",
+        reason="live_booking_completed",
         awarded_at=datetime.now(UTC),
         meta_json={"deal_id": str(live_deal.id)},
     )
@@ -1076,6 +1076,12 @@ def test_mock_cancellation_on_live_booking_is_reversibly_purged(
         provider_payload={"simulated": True, "operation": "cancel"},
     )
     monkeypatch.setattr(booking_service, "get_mock_data_enabled", lambda **_kwargs: True)
+    monkeypatch.setattr(booking_service, "_require_step_up_auth", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        booking_service,
+        "verify_cancellation_approval_token",
+        lambda **_kwargs: None,
+    )
     monkeypatch.setattr(
         booking_service,
         "get_booking_connector",
@@ -1090,6 +1096,11 @@ def test_mock_cancellation_on_live_booking_is_reversibly_purged(
         user=user,
         booking_id=booking.id,
         reason="test cancellation",
+        approval_token="test-cancellation-approval-token",
+        totp_code="123456",
+        master_key_passphrase="test-master-secret",
+        idempotency_key=f"test-cancellation-{booking.id}",
+        token_service=SimpleNamespace(),
     )
     cancellation_id = UUID(cancellation_response.id)
     cancellation = db.get(Cancellation, cancellation_id)

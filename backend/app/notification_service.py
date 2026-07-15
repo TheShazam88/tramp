@@ -19,7 +19,12 @@ from app.db.models import (
     User,
     UserPreference,
 )
-from app.integrations.service import get_integration, get_notification_connector
+from app.integrations.service import (
+    get_integration,
+    get_notification_connector,
+    provider_is_simulated,
+    source_is_simulated,
+)
 from app.integrations.types import ResolvedIntegrationConfig
 
 
@@ -37,6 +42,7 @@ def queue_notification(
     channel: NotificationChannel = NotificationChannel.INHERIT,
     force: bool = False,
     integration: ResolvedIntegrationConfig | None = None,
+    simulated: bool = False,
 ) -> list[NotificationDelivery]:
     acquire_activity_writer_lock(db)
     resolved_integration = integration or get_integration(
@@ -49,11 +55,20 @@ def queue_notification(
         integration=resolved_integration,
     )
     integration_mode = _notification_mode(integration=resolved_integration)
+    simulated_activity = (
+        simulated
+        or (deal is not None and source_is_simulated(deal.source))
+        or (booking is not None and provider_is_simulated(booking.provider))
+    )
     created: list[NotificationDelivery] = []
     for destination_channel, destination_value in destinations:
-        transport = _resolve_transport(
-            destination_channel=destination_channel,
-            integration_mode=integration_mode,
+        transport = (
+            NotificationTransport.LOG_ONLY
+            if simulated_activity
+            else _resolve_transport(
+                destination_channel=destination_channel,
+                integration_mode=integration_mode,
+            )
         )
         delivery = NotificationDelivery(
             user_id=user.id,
@@ -71,6 +86,8 @@ def queue_notification(
                 "subject": subject,
                 "body": body,
                 "force": force,
+                "simulated": simulated_activity,
+                "external_side_effect_suppressed": simulated_activity,
             },
         )
         db.add(delivery)
@@ -102,6 +119,25 @@ def send_notification_delivery(*, db: Session, delivery_id: UUID) -> Notificatio
 
     subject = str((delivery.payload_json or {}).get("subject") or "TRAMP update")
     body = str((delivery.payload_json or {}).get("body") or "")
+
+    if _delivery_transport(delivery) == NotificationTransport.LOG_ONLY.value:
+        delivery.status = NotificationDeliveryStatus.SENT.value
+        delivery.delivered_at = datetime.now(UTC)
+        delivery.payload_json = {
+            **(delivery.payload_json or {}),
+            "response": {
+                "transport": NotificationTransport.LOG_ONLY.value,
+                "simulated": bool((delivery.payload_json or {}).get("simulated")),
+                "external_side_effect_suppressed": bool(
+                    (delivery.payload_json or {}).get("external_side_effect_suppressed")
+                ),
+            },
+        }
+        delivery.error_text = None
+        db.add(delivery)
+        db.commit()
+        db.refresh(delivery)
+        return delivery
 
     try:
         connector = get_notification_connector(db=db, allow_disabled=True)
@@ -185,6 +221,12 @@ def _resolve_transport(
 
 def _notification_mode(*, integration: ResolvedIntegrationConfig) -> str:
     return str(integration.credentials.get("delivery_mode") or "log_only").strip().lower()
+
+
+def _delivery_transport(delivery: NotificationDelivery) -> str:
+    transport = delivery.transport
+    value = transport.value if hasattr(transport, "value") else str(transport)
+    return value.strip().lower()
 
 
 def _in_quiet_hours(*, db: Session, user: User) -> bool:

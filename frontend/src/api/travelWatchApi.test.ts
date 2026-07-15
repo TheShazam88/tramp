@@ -164,6 +164,56 @@ describe("travelWatchApi booking execution", () => {
     });
   });
 
+  it("posts the signed cancellation step-up fields and stable key unchanged", async () => {
+    const post = vi.spyOn(apiClient, "post").mockImplementation(
+      async (path) =>
+        (path.endsWith("/cancellation-approval-token")
+          ? {
+              booking_id: "booking-1",
+              token: "signed-cancellation-token",
+              expires_at: "2030-01-01T00:00:00Z",
+            }
+          : {
+              id: "cancellation-1",
+              booking_id: "booking-1",
+              status: "refunded",
+              refund_received: "640.00",
+              currency: "USD",
+              idempotent_replay: false,
+            }) as never,
+    );
+
+    const approval =
+      await travelWatchApi.createCancellationApprovalToken("booking-1");
+    const result = await travelWatchApi.cancelBooking({
+      bookingId: "booking-1",
+      reason: "Changed plans",
+      approvalToken: approval.token,
+      totpCode: "123456",
+      masterKeyPassphrase: "master-secret",
+      idempotencyKey: "cancel-request-123",
+    });
+
+    expect(post).toHaveBeenNthCalledWith(
+      1,
+      "/bookings/booking-1/cancellation-approval-token",
+      {},
+    );
+    expect(post).toHaveBeenNthCalledWith(2, "/bookings/booking-1/cancel", {
+      reason: "Changed plans",
+      approval_token: "signed-cancellation-token",
+      totp_code: "123456",
+      master_key_passphrase: "master-secret",
+      idempotency_key: "cancel-request-123",
+    });
+    expect(result).toEqual({
+      bookingId: "booking-1",
+      status: "refunded",
+      refundAmount: "$640",
+      idempotentReplay: false,
+    });
+  });
+
   it("maps the authenticated attempt reconciliation response", async () => {
     const get = vi.spyOn(apiClient, "get").mockResolvedValue({
       idempotency_key: "attempt-key-123",

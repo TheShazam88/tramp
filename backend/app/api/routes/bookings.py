@@ -14,6 +14,7 @@ from app.api.schemas.bookings import (
     BookingConflictDetail,
     BookingListResponse,
     BookingResponse,
+    CancellationApprovalTokenResponse,
     CancellationCreateRequest,
     CancellationResponse,
     DisruptionResponse,
@@ -21,6 +22,7 @@ from app.api.schemas.bookings import (
 from app.booking_service import (
     approve_and_book,
     cancel_booking,
+    create_cancellation_approval,
     get_booking,
     list_bookings,
     reconcile_booking_attempt,
@@ -217,6 +219,7 @@ async def cancel_booking_record(
     payload: CancellationCreateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db_session),
+    token_service: SignedTokenService = Depends(get_token_service),
 ) -> CancellationResponse:
     try:
         return cancel_booking(
@@ -224,6 +227,32 @@ async def cancel_booking_record(
             user=current_user,
             booking_id=booking_id,
             reason=payload.reason,
+            approval_token=payload.approval_token,
+            totp_code=payload.totp_code,
+            master_key_passphrase=payload.master_key_passphrase,
+            idempotency_key=payload.idempotency_key,
+            token_service=token_service,
+        )
+    except (LookupError, ValueError, ConflictError, AuthenticationError) as exc:
+        raise _map_service_error(exc) from exc
+
+
+@router.post(
+    "/bookings/{booking_id}/cancellation-approval-token",
+    response_model=CancellationApprovalTokenResponse,
+)
+async def create_cancellation_approval_token_record(
+    booking_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    token_service: SignedTokenService = Depends(get_token_service),
+) -> CancellationApprovalTokenResponse:
+    try:
+        return create_cancellation_approval(
+            db=db,
+            user=current_user,
+            booking_id=booking_id,
+            token_service=token_service,
         )
     except (LookupError, ValueError, ConflictError, AuthenticationError) as exc:
         raise _map_service_error(exc) from exc

@@ -10,9 +10,11 @@ from app.activity_maintenance import acquire_activity_writer_lock
 from app.db.models import (
     AuditLog,
     Booking,
+    Deal,
     Disruption,
     DisruptionStatus,
     DisruptionType,
+    TripWatch,
     User,
 )
 from app.notification_service import queue_notification
@@ -27,10 +29,18 @@ def create_disruption(
     detail: dict[str, object] | None = None,
 ) -> Disruption:
     acquire_activity_writer_lock(db)
+    disruption_detail = dict(
+        detail or {"message": "Manual localhost disruption test."}
+    )
+    simulated = kind == DisruptionType.MANUAL_TEST or bool(
+        disruption_detail.get("simulated")
+    )
+    if simulated:
+        disruption_detail["simulated"] = True
     disruption = Disruption(
         booking_id=booking.id,
         type=kind,
-        detail_json=detail or {"message": "Manual localhost disruption test."},
+        detail_json=disruption_detail,
         status=DisruptionStatus.NEW,
         detected_at=datetime.now(UTC),
     )
@@ -53,6 +63,7 @@ def create_disruption(
         body=f"A disruption was recorded for booking {booking.provider_booking_ref or booking.id}.",
         booking=booking,
         disruption=disruption,
+        simulated=simulated,
     )
     disruption.status = DisruptionStatus.NOTIFIED
     disruption.notified_at = datetime.now(UTC)
@@ -74,7 +85,16 @@ def list_disruptions_for_booking(*, db: Session, booking_id: UUID) -> list[Disru
 
 def resolve_disruption(*, db: Session, disruption_id: UUID, user: User) -> Disruption:
     acquire_activity_writer_lock(db)
-    disruption = db.scalar(select(Disruption).where(Disruption.id == disruption_id))
+    disruption = db.scalar(
+        select(Disruption)
+        .join(Booking, Booking.id == Disruption.booking_id)
+        .join(Deal, Deal.id == Booking.deal_id)
+        .join(TripWatch, TripWatch.id == Deal.watch_id)
+        .where(
+            Disruption.id == disruption_id,
+            TripWatch.user_id == user.id,
+        )
+    )
     if disruption is None:
         raise LookupError("Disruption not found.")
     disruption.status = DisruptionStatus.RESOLVED
