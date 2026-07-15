@@ -26,7 +26,14 @@ const previewCounts = {
   suppressed_attributes: 13,
 };
 
+type PurgeRequest = {
+  confirmation: string;
+  plan_digest: string;
+};
+
 async function mockAdminApi(page: Page) {
+  const purgeRequests: PurgeRequest[] = [];
+
   await page.route("**/api/v1/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
 
@@ -118,18 +125,35 @@ async function mockAdminApi(page: Page) {
       });
       return;
     }
+    if (pathname === "/api/v1/admin/test-data/purge") {
+      purgeRequests.push(route.request().postDataJSON() as PurgeRequest);
+      await route.fulfill({
+        json: {
+          dry_run: false,
+          deleted_counts: previewCounts,
+          reset_watch_count: 14,
+          plan_digest: "a".repeat(64),
+          warnings: [],
+          unreverted_feedback_count: 0,
+          unknown_cancellation_count: 0,
+        },
+      });
+      return;
+    }
 
     await route.fulfill({
       status: 404,
       json: { detail: "Unhandled browser test route." },
     });
   });
+
+  return { purgeRequests };
 }
 
 test.use({ viewport: { width: 320, height: 700 } });
 
 test("purge preview stays reachable at a narrow viewport", async ({ page }) => {
-  await mockAdminApi(page);
+  const { purgeRequests } = await mockAdminApi(page);
   await page.goto("/admin/integrations/runtime");
 
   await expect(
@@ -189,6 +213,11 @@ test("purge preview stays reachable at a narrow viewport", async ({ page }) => {
       name: "Required purge confirmation phrase",
     }),
   ).toBeFocused();
+  await expect(
+    page.getByRole("textbox", {
+      name: "Required purge confirmation phrase",
+    }),
+  ).toHaveValue("PURGE TEST DATA");
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "Copy phrase" })).toBeFocused();
   await page.keyboard.press("Tab");
@@ -196,12 +225,27 @@ test("purge preview stays reachable at a narrow viewport", async ({ page }) => {
     name: "Type the confirmation phrase",
   });
   await expect(confirmation).toBeFocused();
-  await page.keyboard.type("PURGE TEST DATA");
 
   const purge = page.getByRole("button", {
     name: "Purge test data permanently",
   });
   await purge.scrollIntoViewIfNeeded();
   await expect(purge).toBeVisible();
+  await confirmation.fill("purge test data");
+  await expect(purge).toBeDisabled();
+  await confirmation.fill("PURGE TEST DATA ");
+  await expect(purge).toBeDisabled();
+  await confirmation.fill("PURGE TEST DATA");
   await expect(purge).toBeEnabled();
+  await purge.click();
+
+  await expect(
+    page.getByRole("status", { name: "Purge succeeded" }),
+  ).toBeFocused();
+  expect(purgeRequests).toEqual([
+    {
+      confirmation: "PURGE TEST DATA",
+      plan_digest: "a".repeat(64),
+    },
+  ]);
 });

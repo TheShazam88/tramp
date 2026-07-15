@@ -6,7 +6,7 @@ const frontendDirectory = process.cwd();
 const repositoryDirectory = dirname(frontendDirectory);
 
 describe("Playwright web server configuration", () => {
-  it("uses the frontend directory when loaded from another working directory", async () => {
+  it("uses the frontend directory and routed API mode from another working directory", async () => {
     const originalDirectory = process.cwd();
     process.chdir(repositoryDirectory);
 
@@ -17,6 +17,7 @@ describe("Playwright web server configuration", () => {
         : config.webServer;
 
       expect(webServer?.cwd).toBe(frontendDirectory);
+      expect(webServer?.env?.VITE_API_MODE).toBe("live");
     } finally {
       process.chdir(originalDirectory);
     }

@@ -131,14 +131,22 @@ for (const viewport of [
     ).toBeLessThanOrEqual(viewport.width);
 
     await page.goto("/bookings");
-    await expect(page.getByRole("link", { name: "Open deal review" })).toBeVisible();
-    const localTools = page
+    const bookingCard = page.locator(".watch-card").filter({
+      has: page.getByRole("heading", {
+        name: /Tokyo (?:->|to) Singapore/,
+      }),
+    });
+    await expect(bookingCard).toHaveCount(1);
+    await expect(
+      bookingCard.getByRole("link", { name: "Open deal review" }),
+    ).toHaveCount(1);
+    const localTools = bookingCard
       .locator("details.form-disclosure")
       .filter({ hasText: "Local test tools" });
     await expect(localTools).not.toHaveAttribute("open");
     await localTools.locator(":scope > summary").click();
     await expect(
-      page.getByRole("button", { name: "Simulate disruption" }),
+      bookingCard.getByRole("button", { name: "Simulate disruption" }),
     ).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
