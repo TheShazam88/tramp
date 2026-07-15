@@ -1,32 +1,49 @@
 # TRAMP
 
-TRAMP is a localhost-first travel concierge platform with real authentication, seeded admin access, persistent profile/watch/deal/booking flows, writable admin integrations, notification delivery diagnostics, calendar hooks, disruption simulation, and a Docker-first development stack.
+**TRAMP = Travel Amplifier.**
 
-## Stack
+TRAMP is a localhost-first travel concierge that turns household preferences, price history, coverage, and hard spend limits into a calm path from watch to secure booking. Its Editorial Gold wordmark sits on the established cream, blue, gold, and rust interface: blue marks value, gold marks luxury, and rust marks action that needs attention.
 
-- `frontend`: React + Vite UI
-- `api`: FastAPI backend
-- `worker`: Celery worker for async notification jobs
-- `beat`: Celery beat scheduler
-- `postgres`: PostgreSQL 16
-- `redis`: Redis broker/cache
-- `caddy`: local reverse proxy
-- `vault`: optional local dev secrets backend
+## Product tour
 
-## Local startup
+> **Demo-data notice:** Every screenshot below was captured at `1440x1000` with `VITE_API_MODE=mock`. Names, prices, masked payment details, integration states, and balances are demonstration data. No real credentials were loaded and no booking, charge, email, Telegram message, or calendar event was created.
 
-1. Copy the example env file:
+![TRAMP watch dashboard with active trips and value signals](docs/screenshots/01-watches-dashboard.png)
+
+*Watch dashboard — compare active trips, current all-in prices, readiness, value signals, and the next useful action.*
+
+![TRAMP deal review with price context and booking readiness](docs/screenshots/02-deal-review.png)
+
+*Deal review — see historical price context, the value score, loyalty mapping, coverage gaps, and booking readiness before approval.*
+
+![TRAMP flight integration workspace](docs/screenshots/03-admin-integrations.png)
+
+*Admin integrations — reuse encrypted provider profiles, understand connector scope, and follow official credential-acquisition guidance.*
+
+![TRAMP household booking workspace](docs/screenshots/04-household-workspace.png)
+
+*Household workspace — keep travelers, groups, payment readiness, passport gaps, 2FA, and reusable trip setup in one place.*
+
+## Core capabilities
+
+- Monitor trip watches and rank offers for maximum luxury per dollar rather than headline price alone.
+- Explain all-in pricing, recent price history, timing, source coverage, and known inventory gaps.
+- Reuse household travelers, loyalty programs, traveler groups, preferences, payment methods, and trip templates.
+- Execute the in-app booking action through the guarded `/bookings/approve` flow with a signed approval token, saved payment method, TOTP, optional master-key unlock, spend guardrails, and idempotency.
+- Award one TRAMP-Stamp for each successful live booking, backed by an immutable per-booking ledger.
+- Manage encrypted provider settings and structured setup guidance from the Admin workspace.
+- Preview and selectively purge simulated activity without deleting household setup, watch definitions, live bookings, or earned stamps.
+- Track booking attempts, notification and calendar diagnostics, cancellations, refunds, and local disruption tests.
+
+## Quick start
+
+1. Create a private local environment:
 
    ```bash
    cp .env.example .env
    ```
 
-2. Update at least:
-   - `APP_SECRET`
-   - `INITIAL_ADMIN_EMAIL`
-   - `INITIAL_ADMIN_PASSWORD`
-   - `POSTGRES_PASSWORD`
-   - `PUBLIC_BASE_URL` if you are not using `http://localhost`
+2. Set at least `APP_SECRET`, `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, and, when needed, `PUBLIC_BASE_URL`.
 
 3. Start the stack:
 
@@ -34,130 +51,74 @@ TRAMP is a localhost-first travel concierge platform with real authentication, s
    docker compose up --build
    ```
 
-4. Open `http://localhost`.
+4. Open `http://localhost`, sign in with the private `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD` values, and complete TOTP enrollment.
 
-## Seeded admin access
+The stack includes the React/Vite frontend, FastAPI API, Celery worker and scheduler, PostgreSQL 16, Redis, Caddy, and optional Vault support. Provider credentials belong in the Admin UI or private environment, never in source control.
 
-- Email: the `INITIAL_ADMIN_EMAIL` value from your private `.env`
-- Password: the `INITIAL_ADMIN_PASSWORD` value from your private `.env`
-
-On first login, TRAMP allows the seeded admin to sign in before TOTP exists, then complete authenticator enrollment in the onboarding flow. Duo Mobile, Google Authenticator, 1Password, Authy, and other standard TOTP apps work.
-
-## Localhost operating modes
-
-TRAMP v2 stays safe on localhost by supporting three shapes:
-
-- `demo`: seeded data and dry-run side effects
-- `test-live-shape`: real code paths with sandbox-style credentials where available
-- `localhost-prod-shape`: full local contracts, queues, and diagnostics using locally supplied credentials
-
-The default setup remains safe and mock/test-oriented until you configure integrations in the admin UI.
-
-## What v2 adds
-
-- Writable admin integrations with encrypted secret persistence
-- Notification transport adapters with Celery-backed delivery tracking
-- Calendar sync hooks with log-only fallback
-- Booking attempt tracking and stronger idempotency/audit paths
-- Localhost disruption simulation and resolution flow
-- Optional local-file auto-unlock support for unattended booking experiments
-- Richer health output at `/api/v1/health`
-
-## Integration management
-
-Provider credentials now live primarily in the TRAMP admin UI instead of only in `.env`.
-
-- Go to `Admin` after logging in
-- Save credentials, modes, and feature flags per integration
-- Use `Test connection` for a local presence and shape check unless the UI explicitly says it makes a provider network request
-- Settings are stored encrypted at rest in PostgreSQL and survive restart
-
-Supported v2 admin-managed surfaces include:
-
-- flights
-- hotels
-- booking
-- notifications
-- calendar
-
-### Provider access and credential acquisition
-
-- Flights: follow the official [Amadeus quick start](https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/quick-start/) or [Duffel flights guide](https://duffel.com/docs/guides/getting-started-with-flights). New Kiwi Tequila partnerships are invitation only according to [Kiwi's official announcement](https://media.kiwi.com/articles-and-interviews/better-for-business-kiwi-com-takes-a-new-approach-to-partnerships/).
-- Hotels: choose a provider first. [Hotelbeds](https://developer.hotelbeds.com/documentation/getting-started/) requires both an API Key and Secret for X-Signature authentication. The [Booking.com Demand API](https://developers.booking.com/demand) uses separate access and does not share Hotelbeds credentials.
-- Booking: direct Duffel setup uses `access_token`, Amadeus uses `client_id` and `client_secret`, and Kiwi uses `api_key` after invitation-only access. A matching shared provider profile can supply the same shape.
-- Notifications: `log_only` and local Mailpit need no universal API key. Hosted SMTP uses credentials from your SMTP provider and can send external email. A bot created with the official [BotFather tutorial](https://core.telegram.org/bots/tutorial) can send external Telegram messages.
-- Calendar: follow the [Google Calendar create events guide](https://developers.google.com/workspace/calendar/api/guides/create-events), configure OAuth consent and a client, and authorize `https://www.googleapis.com/auth/calendar`. Google mode can create and delete live events.
-
-Flight search, hotel search, and booking connectors remain simulated and do not become live provider implementations just because credentials are saved. SMTP, Telegram, and Google Calendar are different: those modes perform real external side effects when configured and used.
-
-Admin UI sequence:
-
-1. Open the provider's integration category.
-2. Expand `How to get ... credentials` above the credential fields.
-3. Follow the official setup or application link and start with test access when available.
-4. Save credentials in a shared profile or directly on the connector.
-5. Link the profile where supported, then run `Test connection`. Most connectors only check local presence and shape; Google Calendar mode performs a network reachability check.
-6. Treat SMTP, Telegram, and Google Calendar as live external side effects. Flight, hotel, and booking stay simulated until real provider connectors are implemented.
-
-## Notification and calendar behavior
-
-- Notification mode defaults to `log_only`
-- SMTP dev mode can be pointed at a local mail sink such as MailHog/Mailpit
-- Hosted SMTP can send external email when selected and used
-- Telegram mode calls the Telegram Bot API and can send external messages
-- Calendar mode defaults to `log_only`
-- Google Calendar mode can create and delete live events after saving a write-scoped `access_token` and `calendar_id` in Admin
-
-Booking and cancellation flows now record notification delivery state and calendar sync detail so localhost runs remain observable.
-
-## Auto-unlock for localhost
-
-Default mode stays:
-
-```env
-KEY_UNLOCK_MODE=master_key
-```
-
-For unattended booking experiments, switch to:
-
-```env
-KEY_UNLOCK_MODE=auto
-MASTER_KEY_SOURCE=local_file
-AUTO_UNLOCK_LOCAL_FILE_PATH=.tramp-auto-unlock.key
-AUTO_UNLOCK_SEED_MATERIAL=replace-me
-```
-
-This keeps the local auto-unlock secret encrypted on disk using the app secret. It is intended only for localhost testing.
-
-## Health and diagnostics
-
-- App health: `GET /api/v1/health`
-- Admin integrations: UI-backed diagnostics for saved providers
-- Bookings page: notification, calendar, and disruption status summaries
-
-## Verification
-
-Minimum verification after a fresh boot:
-
-1. Log in with the seeded admin.
-2. Complete TOTP enrollment.
-3. Save at least one integration setting in `Admin`.
-4. Run a connection test.
-5. Create or review a booking flow.
-6. Confirm notification and calendar detail appears on the booking record.
-7. Simulate a disruption and resolve it.
-
-## Optional Vault
-
-Vault is still optional. Start it only if you want to experiment with secrets backends:
+For a frontend-only demonstration with no backend credentials:
 
 ```bash
-docker compose --profile vault up -d vault
+cd frontend
+npm ci
+VITE_API_MODE=mock npm run dev
 ```
 
-## Repository pointers
+Mock mode uses deterministic local data and does not call the booking, notification, calendar, or provider APIs.
 
-- `docs/runbook.md`: restart-safe local operations guide
-- `.env.example`: local bootstrap defaults
-- `backend/`: API, models, services, migrations, worker tasks
-- `frontend/`: app shell, onboarding, profile, bookings, admin UI
+## Provider access and credential acquisition
+
+After signing in as an administrator:
+
+1. Open `Admin`, then choose Flights, Hotels, Booking, Messaging, or Calendar.
+2. Expand `How to get ... credentials` beside the relevant form.
+3. Follow the official provider link and begin with test access where available.
+4. Save credentials in a reusable profile or directly on one connector.
+5. Link reusable profiles where supported, then run `Test connection`.
+6. Read the connector's runtime note before enabling anything that can contact an external system.
+
+Official acquisition guidance:
+
+- **Flights:** follow the official [Amadeus quick start](https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/quick-start/) or [Duffel flights guide](https://duffel.com/docs/guides/getting-started-with-flights). New Kiwi Tequila partnerships are invitation-only according to [Kiwi's official announcement](https://media.kiwi.com/articles-and-interviews/better-for-business-kiwi-com-takes-a-new-approach-to-partnerships/).
+- **Hotels:** [Hotelbeds](https://developer.hotelbeds.com/documentation/getting-started/) requires an API Key and Secret for X-Signature authentication. The [Booking.com Demand API](https://developers.booking.com/demand) has separate access and does not share Hotelbeds credentials.
+- **Booking:** direct Duffel setup uses `access_token`, Amadeus uses `client_id` and `client_secret`, and Kiwi uses `api_key` after invitation-only access. A compatible shared provider profile can supply the same credential shape.
+- **Notifications:** `log_only` and a local Mailpit sink need no universal API key. Hosted SMTP can send external email. A bot created with the official [BotFather tutorial](https://core.telegram.org/bots/tutorial) can send external Telegram messages.
+- **Calendar:** follow Google's [create events guide](https://developers.google.com/workspace/calendar/api/guides/create-events), configure OAuth consent and a client, and authorize `https://www.googleapis.com/auth/calendar`. Google mode can create and delete live events.
+
+Saving credentials records configuration; it does not turn a simulated flight, hotel, or booking adapter into a live provider implementation. The guarded booking UI uses the real booking endpoint, but a TRAMP-Stamp is awarded only when the configured executor returns a successful, non-simulated live booking. Hosted SMTP, Telegram, and Google Calendar are different: those modes can create external side effects when configured and invoked.
+
+## TRAMP-Stamps
+
+Each successfully created live booking earns exactly one TRAMP-Stamp. The booking transaction writes a ledger row keyed uniquely to the booking, so retries and idempotent replays cannot duplicate the reward.
+
+No stamp is awarded for mock inventory, simulated providers or payloads, failed attempts, approval intent without a booking, or a replay of an already-booked request. Cancellation does not remove an earned stamp in this release.
+
+When the booking response reports `tramp_stamps_awarded: 1`, an ornate blue-and-gold butterfly descends, flutters, settles, and reveals `+1 TRAMP-Stamp`. Reduced-motion users receive the final static reward state. The persistent badge reads the balance calculated from the ledger.
+
+## Mock behavior and selective purge
+
+`VITE_API_MODE=mock` is the deterministic, credential-free frontend mode used for the screenshots. Mock booking remains simulated and never earns a stamp.
+
+The live stack also has an Admin → Runtime policy for fallback mock inventory. Disabling fallback mock data leaves empty states when no real connector supplies inventory; it does not fabricate live results.
+
+To remove generated test activity without resetting the household:
+
+1. Open `Admin` → `Runtime`.
+2. Select `Preview purge` and review the per-table counts.
+3. Copy or type the exact confirmation phrase `PURGE TEST DATA`.
+4. Confirm the preview-bound purge.
+
+The selective purge removes simulated observations, deals, attempts, bookings, related diagnostics, and derived price statistics. It preserves users, travelers, groups, preferences, payment methods, trip templates, watch definitions, integration configuration, live activity, and the TRAMP-Stamp ledger.
+
+## Safe operations
+
+- Notification and calendar modes default to `log_only`.
+- Most connection tests validate local credential presence and shape; the UI identifies checks that make provider network requests.
+- Hosted SMTP, Telegram, Google Calendar, and a genuinely live booking provider must be treated as external side effects.
+- Health is available at `GET /api/v1/health`.
+- Restart, migration, booking, purge, screenshot-refresh, and verification procedures are in the [TRAMP runbook](docs/runbook.md).
+
+Additional references:
+
+- [Build specification](travel-autobook-spec.md)
+- [Restart-safe operations runbook](docs/runbook.md)
+- [Local environment template](.env.example)

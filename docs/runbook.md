@@ -35,6 +35,23 @@ docker compose down -v
 docker compose up --build
 ```
 
+## Selective simulated-activity purge
+
+Use the selective purge when you want to remove generated test activity without resetting household setup or the database volume:
+
+1. Sign in as an administrator.
+2. Open `Admin` → `Runtime`.
+3. Select `Preview purge`.
+4. Review the per-table counts, watch restorations, and warnings.
+5. Copy or type the exact phrase `PURGE TEST DATA`.
+6. Execute the purge from the same preview. The API binds execution to that preview's `plan_digest` and refuses a stale plan.
+
+The preview endpoint is `GET /api/v1/admin/test-data/purge-preview`; it does not mutate data. The confirmed endpoint is `POST /api/v1/admin/test-data/purge` with both the exact confirmation and preview digest.
+
+The transaction removes classified simulated observations, deals, feedback, booking attempts and bookings, simulated cancellations and disruptions, related notifications and spend rows, affected learning state, test audit rows, and derived price statistics. It restores eligible watch, deal, and booking state where test activity had changed it.
+
+It preserves users, travelers, loyalty accounts, traveler groups, preferences, payment methods, trip templates, watch definitions, integration settings, live activity, and every stamped booking. The service aborts rather than deleting a booking referenced by `tramp_stamp_ledger`.
+
 ## Container checks
 
 Status:
@@ -62,7 +79,7 @@ docker compose logs -f api worker beat frontend caddy postgres redis
 - `api` serves `/api/v1`
 - `worker` processes notification delivery jobs
 - `beat` remains available for scheduler expansion
-- `postgres` stores users, integrations, bookings, deliveries, and disruption state
+- `postgres` stores users, integrations, bookings, the TRAMP-Stamp ledger, deliveries, and disruption state
 - `redis` backs Celery and cache-style coordination
 
 ## Health checks
@@ -97,6 +114,20 @@ Recommended localhost-safe defaults:
 - notifications: `delivery_mode=log_only`
 - calendar: `delivery_mode=log_only`
 - flights/hotels/booking: leave credentials blank unless you are testing live-shaped setup
+
+## Live booking and TRAMP-Stamps
+
+The in-app `Book now` action is the real guarded booking path, not an approval-intent shortcut:
+
+1. Open a proposed deal and review readiness, price context, loyalty mapping, and coverage.
+2. Choose a saved payment method.
+3. Enter the six-digit TOTP code and, when the configured key mode requires it, the master-key passphrase.
+4. TRAMP mints or verifies a signed approval token and submits `/api/v1/bookings/approve` with one idempotency key.
+5. The booking service revalidates the offer and guardrails, executes the configured provider, records booking, spend, audit, and eligible stamp state in the transaction, then returns booking and balance fields.
+
+Exactly one ledger row is inserted only when execution is explicitly non-simulated, the deal source and provider payload are non-simulated, and the resulting booking is `ticketed` or `booked`. The unique booking constraint makes retries safe. Mock bookings, failed attempts, and idempotent replays earn no stamp; cancellation does not revoke an earned stamp.
+
+The frontend shows the blue-and-gold butterfly only when the response reports `tramp_stamps_awarded=1`. The profile and top-bar balance are calculated from `tramp_stamp_ledger`, not a mutable cached counter.
 
 ## Notification delivery modes
 
@@ -218,6 +249,27 @@ Backend tests:
 ```bash
 docker compose run --rm api pytest
 ```
+
+### Refresh documentation screenshots
+
+The capture script starts its own loopback-only Vite process, forces `VITE_API_MODE=mock`, fixes browser time and locale, blocks external HTTP requests, disables animation, and captures a `1440x1000` viewport. It does not need real credentials or a separately running development server.
+
+```bash
+cd frontend
+npm ci
+npx playwright install chromium
+npm run screenshots
+npm run screenshots:smoke
+```
+
+The outputs are:
+
+- `docs/screenshots/01-watches-dashboard.png`
+- `docs/screenshots/02-deal-review.png`
+- `docs/screenshots/03-admin-integrations.png`
+- `docs/screenshots/04-household-workspace.png`
+
+`npm run screenshots:smoke` verifies each file is non-empty, has a valid PNG header and terminator, and is exactly `1440x1000`.
 
 ## Optional Vault
 

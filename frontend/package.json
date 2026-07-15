@@ -6,8 +6,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "vitest run --exclude \"e2e/**\"",
+    "test": "vitest run --exclude \"e2e/**\" --exclude \"scripts/**\"",
     "test:browser": "playwright test",
+    "screenshots": "node scripts/capture-screenshots.mjs",
+    "screenshots:smoke": "node scripts/capture-screenshots.mjs --smoke",
+    "screenshots:test": "node --test scripts/capture-screenshots.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

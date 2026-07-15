@@ -222,6 +222,8 @@ cancellations  id, booking_id, reason, refund_expected, refund_received, currenc
 spend_ledger  id, user_id, watch_id, booking_id, amount, currency, booked_at
 disruptions  id, booking_id, type(schedule_change|cancellation|better_deal_in_free_window), detail_json, detected_at, status(new|notified|resolved)
 audit_log  id, actor, action, target, amount, currency, at, meta_json
+tramp_stamp_ledger  id, user_id, booking_id(unique), amount(1), reason(live_booking_completed), awarded_at, meta_json
+# Balance is SUM(amount) per user. The unique booking key makes the live-booking reward at-most-once.
 
 # STATIC SEED DATA (config, not user data):
 alliance_map        airline_iata -> alliance(star|oneworld|skyteam|none)   # maintain a complete map
@@ -277,13 +279,16 @@ Enqueue each `active` watch on its `refresh_interval` (**default daily**). Fan o
 Auto-generate a unique, HMAC-signed, **single-use**, ~30-min approval token per proposed plan (can bundle flight+hotel). Deliver via chosen channel (§12): Telegram message with **Confirm/Reject** buttons and/or email signed link → confirm step requires login + TOTP, shows the breakdown, the FF program to be attached per traveler, the historical price context, the coverage report, and any validation warnings → one **Confirm & book** + **Reject** with reasons. Confirming consumes the token; reject/expiry invalidates it.
 
 ### 8.3 Booking executor (deterministic, post-approval)
-Re-validate + re-price the live offer → **guardrail check (§11)** → **obtain the data key per `KEY_UNLOCK_MODE` (§14)** (in `master_key` mode the master key entered at this approval; in `auto` mode the resident key) → decrypt payment/traveler data in memory → resolve **loyalty mapping (§7.4)** per traveler → Duffel `order` create (passengers, ages, KTN/redress, `loyalty_programme_accounts`, seats/meals if `seat_auto_select`/`meal_pref`, services) / best-of hotel booking → persist `bookings` + `spend_ledger` + `audit_log` → **push to Google Calendar** → notify → zeroize secrets and key. **Trip-mode sequencing:** flights_then_hotels (hotels gated until flight booked; dates lock nights) · hotels_only (skip flights) · flights_only. On failure: never silently retry a charge.
+The in-app `Book now` action uses this executor through `/bookings/approve`; it does not stop at confirmation intent. The client supplies a server-minted or notification approval token, saved payment-method ID, TOTP, the master-key passphrase when required, and one stable idempotency key.
+
+Re-validate + re-price the live offer → **guardrail check (§11)** → **obtain the data key per `KEY_UNLOCK_MODE` (§14)** (in `master_key` mode the master key entered at this approval; in `auto` mode the resident key) → decrypt payment/traveler data in memory → resolve **loyalty mapping (§7.4)** per traveler → Duffel `order` create (passengers, ages, KTN/redress, `loyalty_programme_accounts`, seats/meals if `seat_auto_select`/`meal_pref`, services) / best-of hotel booking → persist `bookings` + `spend_ledger` + `audit_log` and the eligible `tramp_stamp_ledger` row → **push to Google Calendar** → notify → zeroize secrets and key. Return the booking with `tramp_stamps_awarded` and the ledger-derived `tramp_stamp_balance`. **Trip-mode sequencing:** flights_then_hotels (hotels gated until flight booked; dates lock nights) · hotels_only (skip flights) · flights_only. On failure: never silently retry a charge.
 
 **Booking integrity (money-correctness — required):**
 - **Idempotency:** every order-create call carries an idempotency key derived from `deal_id`; retries/timeouts can never double-book or double-charge.
 - **Bundle saga / compensation:** for a flight+hotel plan, book sequentially and define rollback — if the flight books but the hotel fails, do **not** silently leave a half-booked trip: notify immediately, hold the flight, and offer to retry the hotel or cancel the flight within its void/free-cancel window (never auto-cancel a booked flight without approval).
 - **Ticketing reconciliation:** an order being "created" ≠ "ticketed." Poll/verify the PNR reaches ticketed status with a ticket number; surface `pending_ticketing` and alert if it doesn't resolve.
 - **APIS / Secure Flight compliance:** pass the required Advance Passenger Information (passport, DOB, gender, nationality) to carriers; enforce that passenger names exactly match passports (block on mismatch). This is mandatory for real ticketing, not optional polish.
+- **Reward integrity:** award one stamp only when execution is explicitly non-simulated, the source/provider/payload are non-simulated, and booking reaches `ticketed` or `booked`. Mock runs, failed attempts, confirmation-only actions, and idempotent replays earn none. Cancellation does not revoke an earned stamp.
 
 ### 8.4 Rejection feedback — value vs preference (acceptance band, not a hard floor)
 Always store the offer fingerprint (never re-propose the identical thing) + log feedback. **Preference** (wrong_airline|wrong_hotel|wrong_area) → add `suppressed_attributes`; **value band untouched** (similar-value options that avoid the trait stay eligible). **Constraint** (layover) → tighten it. **Value** (too_pricey → raise `value_pressure`; not_luxe → raise `quality_floor`). **Ambiguous/bare no** → mild nudge, escalate on repeats. Eligibility: `price ≤ ceiling` AND `quality ≥ quality_floor` AND `value_score ≥ band_low` (=`value_target×(1−band_tolerance)`, lifted by `value_pressure`) AND not a rejected fingerprint AND not a hard-suppressed attribute (soft suppression subtracts weight first). Anti-nag: alert only on a distinct eligible candidate; never require strictly beating the last.
@@ -385,6 +390,8 @@ One `KeyProvider` interface with both modes; selectable in Profile/Settings. In 
 ## 15. Operations — quota, cost, health
 
 Per-adapter usage counters vs free tiers; throttle/pause near quota to stay free; log spend for paid sources (proxy, Airbnb data API). Adapter health: repeated errors → degraded, surfaced in UI, others keep running. Optional daily run summary.
+
+**Selective simulated-activity purge:** Admin → Runtime must provide a non-mutating preview and a preview-bound execution step requiring the exact phrase `PURGE TEST DATA`. Classification removes only simulated observations, deals, attempts, bookings, related cancellations/disruptions/notifications/spend/audit state, affected learning artifacts, and derived `price_stats`; it restores eligible watch/deal/booking state in one transaction. Preserve account and household setup, watch definitions, integration settings, live activity, and `tramp_stamp_ledger`. Abort if a selected booking is referenced by a stamp row or if the plan digest changed after preview.
 
 ---
 
@@ -591,7 +598,13 @@ Buttons carry the signed single-use token. **Confirm** → opens the Approval pa
 
 **Approval page** (screen 3 in "approval mode"): login + TOTP gate → final all-in breakdown → (master-key field if in that mode) → **Confirm & book** → re-price + guardrail check (§11) + book (§8.3) → "Booked", itinerary attached, calendar updated. Token consumed; expiry/reject invalidates it.
 
+When that response reports one newly awarded stamp, show the ornate blue-and-gold butterfly reward once, then refresh the persistent ledger-derived balance. Respect `prefers-reduced-motion` by showing the settled static state. Simulated bookings never animate a reward.
+
 **Other notifications:** booking confirmation + receipt, booking failure, disruption/schedule-change (§8.7), cancellation/refund status (§8.8), and an optional daily run summary (§15) — all on the chosen channel(s), honoring quiet hours.
+
+### 17.3 Documentation screenshot contract
+
+Capture `/watches`, `/deals/deal-118400?watchId=tokyo-singapore`, `/admin/integrations/flights`, and `/profile` at exactly `1440x1000` with `VITE_API_MODE=mock`. `frontend/scripts/capture-screenshots.mjs` owns the loopback Vite process, fixed browser clock/locale, external-request block, animation suppression, route-heading waits, output paths, and PNG smoke validation. The four files under `docs/screenshots/` are demo data and must not contain credentials or trigger any provider, booking, notification, or calendar side effect. Refresh them with `cd frontend && npm run screenshots`, then run `npm run screenshots:smoke`.
 
 ---
 
@@ -621,7 +634,8 @@ travel-autobook/
 │   ├── security/          # vault, crypto, KeyProvider, signed tokens (§14)
 │   └── scheduler/         # celery tasks, beat
 ├── frontend/src/{pages,components,api,hooks,theme}/   # theme = §17 tokens
-└── docs/runbook.md
+├── frontend/scripts/capture-screenshots.mjs
+└── docs/{runbook.md,screenshots/*.png}
 ```
 
 ---
@@ -710,7 +724,7 @@ High-value additions that elevate the product; promote into the build as desired
 - **Backups & disaster recovery:** automated encrypted Postgres backups + a documented restore runbook; the master key stored separately from backups (a backup is useless without it).
 - **Secrets rotation:** support rotating `APP_SECRET`, the master key (re-encrypt blobs), and provider tokens without downtime.
 - **CI/CD:** lint, type-check, and tests as merge gates; reproducible builds.
-- **Testing strategy:** adapter unit tests with recorded fixtures; an end-to-end booking test in Duffel/EPS **test mode**; contract tests against provider schemas; a global **simulation/dry-run** switch so the whole pipeline (including "booking") can run without real charges.
+- **Testing strategy:** adapter unit tests with recorded fixtures; an end-to-end booking test in Duffel/EPS **test mode**; contract tests against provider schemas; a global **simulation/dry-run** switch so the whole pipeline (including "booking") can run without real charges; deterministic mock-mode documentation captures with PNG signature and dimension validation.
 - **Feature flags:** toggle individual adapters/features (and the scrape/Airbnb layer) without redeploying.
 - **Scheduler robustness:** handle DST, missed runs, and catch-up; idempotent jobs.
 - **Privacy / data lifecycle:** one-click **export all** and **delete all** personal data; a stated retention policy for `price_observations`/logs; encryption at rest for all PII.
