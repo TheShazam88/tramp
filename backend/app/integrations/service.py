@@ -144,8 +144,13 @@ def update_integration(
     stored_overrides = _load_stored_credentials(record=record, key=entry.key)
     linked_profile = _get_linked_profile(db=db, record=record)
     linked_profile_credentials = _load_profile_credentials(profile=linked_profile)
-    effective_masked = mask_secret_payload(
-        {**bootstrap["credentials"], **linked_profile_credentials, **stored_overrides}
+    effective_masked = mask_catalog_credentials(
+        credentials={
+            **bootstrap["credentials"],
+            **linked_profile_credentials,
+            **stored_overrides,
+        },
+        public_keys=_public_credential_keys(entry.credential_fields),
     )
 
     if record is None:
@@ -173,8 +178,13 @@ def update_integration(
         )
         linked_profile = _get_linked_profile(db=db, record=record)
         linked_profile_credentials = _load_profile_credentials(profile=linked_profile)
-        effective_masked = mask_secret_payload(
-            {**bootstrap["credentials"], **linked_profile_credentials, **stored_overrides}
+        effective_masked = mask_catalog_credentials(
+            credentials={
+                **bootstrap["credentials"],
+                **linked_profile_credentials,
+                **stored_overrides,
+            },
+            public_keys=_public_credential_keys(entry.credential_fields),
         )
     if "credentials" in effective_fields:
         stored_overrides = merge_credential_updates(
@@ -252,7 +262,10 @@ def update_credential_profile(
 ) -> ResolvedCredentialProfile:
     profile = _require_credential_profile(db=db, profile_id=profile_id)
     current_credentials = _load_profile_credentials(profile=profile)
-    effective_masked = mask_secret_payload(current_credentials)
+    effective_masked = mask_catalog_credentials(
+        credentials=current_credentials,
+        public_keys=_profile_public_credential_keys(profile.provider_key),
+    )
     if label is not None and label.strip():
         profile.label = label.strip()
     if credentials is not None:
@@ -483,7 +496,10 @@ def resolve_integration_state(
         runtime_connector=runtime_connector,
         feature_flags=feature_flags,
         credentials=effective_credentials,
-        credentials_masked=mask_secret_payload(effective_credentials),
+        credentials_masked=mask_catalog_credentials(
+            credentials=effective_credentials,
+            public_keys=_public_credential_keys(entry.credential_fields),
+        ),
         credential_source=credential_source,
         bootstrap_credentials_present=bool(bootstrap["credentials"]),
         has_stored_credentials=bool(stored_overrides),
@@ -514,6 +530,34 @@ def mask_secret_payload(value: Any) -> Any:
             return "*" * len(value)
         return f"{value[:2]}{'*' * max(len(value) - 4, 4)}{value[-2:]}"
     return value
+
+
+def mask_catalog_credentials(
+    *,
+    credentials: dict[str, Any],
+    public_keys: set[str],
+) -> dict[str, Any]:
+    return {
+        key: value if key in public_keys else mask_secret_payload(value)
+        for key, value in credentials.items()
+    }
+
+
+def _public_credential_keys(fields) -> set[str]:
+    return {field.key for field in fields if not field.sensitive}
+
+
+def _profile_public_credential_keys(provider_key: str) -> set[str]:
+    return {
+        field.key
+        for entry in list_catalog_entries()
+        if (
+            entry.provider_key == provider_key
+            or provider_key in entry.compatible_profile_provider_keys
+        )
+        for field in entry.credential_fields
+        if not field.sensitive
+    }
 
 
 def merge_credential_updates(
@@ -817,7 +861,10 @@ def _serialize_credential_profile(
         id=str(profile.id),
         provider_key=profile.provider_key,
         label=profile.label,
-        credentials_masked=mask_secret_payload(_load_profile_credentials(profile=profile)),
+        credentials_masked=mask_catalog_credentials(
+            credentials=_load_profile_credentials(profile=profile),
+            public_keys=_profile_public_credential_keys(profile.provider_key),
+        ),
         updated_at=profile.updated_at,
         updated_by=str(profile.updated_by) if profile.updated_by else None,
         usage_integration_keys=list(usage),

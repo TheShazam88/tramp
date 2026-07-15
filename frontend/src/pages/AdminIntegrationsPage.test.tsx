@@ -410,6 +410,45 @@ describe("AdminIntegrationsPage credential guide placement", () => {
     expect(cardQueries.queryByLabelText("Hotelbeds API secret")).not.toBeInTheDocument();
   });
 
+  it("displays clear operational modes while keeping secret inputs write-only", async () => {
+    const provider = buildProvider({
+      key: "notifications",
+      name: "Notifications",
+      category: "messaging",
+      credentialsMasked: {
+        delivery_mode: "telegram_bot",
+        smtp_host: "smtp.example.com",
+        telegram_bot_token: "12****************en",
+      },
+      credentialFields: [
+        { key: "delivery_mode", label: "Delivery mode", sensitive: false },
+        { key: "smtp_host", label: "SMTP host", sensitive: false },
+        {
+          key: "telegram_bot_token",
+          label: "Telegram bot token",
+          sensitive: true,
+        },
+      ],
+    });
+    renderCategory("messaging", [provider]);
+
+    const heading = await screen.findByRole("heading", { name: "Notifications" });
+    const card = heading.closest(".watch-card") as HTMLElement;
+    const cardQueries = within(card);
+    const mode = cardQueries.getByLabelText("Delivery mode");
+    const token = cardQueries.getByLabelText("Telegram bot token");
+
+    expect(mode).toHaveValue("telegram_bot");
+    expect(cardQueries.getByText("Telegram Bot")).toBeInTheDocument();
+    expect(token).toHaveAttribute("type", "password");
+    expect(token).toHaveValue("");
+    expect(token).toHaveAttribute(
+      "placeholder",
+      expect.stringContaining("saved"),
+    );
+    expect(card).not.toHaveTextContent("12****************en");
+  });
+
   it("does not duplicate a flight guide when a shared profile hides direct fields", async () => {
     const provider = buildProvider({
       key: "flights_amadeus",

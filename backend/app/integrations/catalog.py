@@ -53,7 +53,11 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
         guide=IntegrationAcquisitionGuide(
             links=(
                 IntegrationAcquisitionLink(
-                    label="Amadeus quick start",
+                    label="Amadeus developer portal registration",
+                    url="https://developers.amadeus.com/",
+                ),
+                IntegrationAcquisitionLink(
+                    label="Amadeus quick start and application creation",
                     url=(
                         "https://developers.amadeus.com/self-service/apis-docs/guides/"
                         "developer-guides/quick-start/"
@@ -130,12 +134,16 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
         guide=IntegrationAcquisitionGuide(
             links=(
                 IntegrationAcquisitionLink(
-                    label="Duffel API authentication guide",
-                    url="https://duffel.com/docs/api/overview/making-requests",
+                    label="Duffel account signup",
+                    url="https://duffel.com/",
                 ),
                 IntegrationAcquisitionLink(
-                    label="Duffel flights getting started",
-                    url="https://duffel.com/docs/guides/getting-started-with-flights",
+                    label="Duffel dashboard and access-token setup",
+                    url="https://duffel.com/guides/getting-started",
+                ),
+                IntegrationAcquisitionLink(
+                    label="Duffel API authentication guide",
+                    url="https://duffel.com/docs/api/overview/making-requests",
                 ),
             ),
             account_requirements=(
@@ -282,8 +290,23 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
         guide=IntegrationAcquisitionGuide(
             links=(
                 IntegrationAcquisitionLink(
+                    label="Hotelbeds API key registration",
+                    url="https://developer.hotelbeds.com/register/",
+                ),
+                IntegrationAcquisitionLink(
                     label="Hotelbeds getting started",
                     url="https://developer.hotelbeds.com/documentation/getting-started/",
+                ),
+                IntegrationAcquisitionLink(
+                    label="Booking.com affiliate application",
+                    url="https://partnerships.booking.com/",
+                ),
+                IntegrationAcquisitionLink(
+                    label="Booking.com Demand API prerequisites",
+                    url=(
+                        "https://developers.booking.com/demand/docs/getting-started/"
+                        "prerequisites"
+                    ),
                 ),
                 IntegrationAcquisitionLink(
                     label="Booking.com Demand API",
@@ -296,6 +319,10 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                     "Hotelbeds requires both an API Key and Secret. Booking.com Demand "
                     "uses its own separate access process."
                 ),
+                (
+                    "Booking.com Demand API requires registration as a Booking.com "
+                    "Managed Affiliate Partner and access to Partner Centre."
+                ),
             ),
             steps=(
                 "Choose one hotel provider before entering credentials.",
@@ -304,8 +331,13 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                     "required X-Signature on each future provider request."
                 ),
                 (
-                    "For Booking.com, use its labeled Demand API link. This generic TRAMP "
-                    "card does not yet define a Booking.com credential shape."
+                    "For Booking.com, start with the official affiliate application. "
+                    "Affiliate signup does not guarantee Demand API access."
+                ),
+                (
+                    "Use Booking.com Demand API only after Booking.com confirms Managed "
+                    "Affiliate Partner status and supplies Partner Centre API access. "
+                    "This generic TRAMP card does not define a Booking.com credential shape."
                 ),
                 "Enter only the fields shown for the selected provider.",
                 "Save the connector and run Test connection.",
@@ -516,6 +548,10 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
         guide=IntegrationAcquisitionGuide(
             links=(
                 IntegrationAcquisitionLink(
+                    label="Telegram BotFather bot creation",
+                    url="https://t.me/BotFather",
+                ),
+                IntegrationAcquisitionLink(
                     label="Telegram BotFather tutorial",
                     url="https://core.telegram.org/bots/tutorial",
                 ),
@@ -601,6 +637,17 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
         ),
         guide=IntegrationAcquisitionGuide(
             links=(
+                IntegrationAcquisitionLink(
+                    label="Google Cloud Calendar API enablement",
+                    url=(
+                        "https://console.cloud.google.com/flows/enableapi"
+                        "?apiid=calendar-json.googleapis.com"
+                    ),
+                ),
+                IntegrationAcquisitionLink(
+                    label="Google Cloud OAuth credentials",
+                    url="https://console.cloud.google.com/apis/credentials",
+                ),
                 IntegrationAcquisitionLink(
                     label="Google Calendar create events guide",
                     url=(

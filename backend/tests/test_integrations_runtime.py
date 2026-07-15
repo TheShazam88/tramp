@@ -58,7 +58,10 @@ from app.watch_mock_adapter import DeterministicMockAdapter
 
 
 def _configure_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APP_SECRET", "test-master-secret")
+    monkeypatch.setenv(
+        "APP_SECRET",
+        "test-master-secret-with-more-than-thirty-two-bytes",
+    )
     monkeypatch.setenv("BOOKING_MASTER_KEY_PASSPHRASE", "test-master-secret")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost/test_db")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
@@ -184,7 +187,11 @@ def test_catalog_acquisition_guides_use_official_provider_links() -> None:
     expected_links = {
         "flights_amadeus": (
             (
-                "Amadeus quick start",
+                "Amadeus developer portal registration",
+                "https://developers.amadeus.com/",
+            ),
+            (
+                "Amadeus quick start and application creation",
                 "https://developers.amadeus.com/self-service/apis-docs/guides/"
                 "developer-guides/quick-start/",
             ),
@@ -196,12 +203,16 @@ def test_catalog_acquisition_guides_use_official_provider_links() -> None:
         ),
         "flights_duffel": (
             (
-                "Duffel API authentication guide",
-                "https://duffel.com/docs/api/overview/making-requests",
+                "Duffel account signup",
+                "https://duffel.com/",
             ),
             (
-                "Duffel flights getting started",
-                "https://duffel.com/docs/guides/getting-started-with-flights",
+                "Duffel dashboard and access-token setup",
+                "https://duffel.com/guides/getting-started",
+            ),
+            (
+                "Duffel API authentication guide",
+                "https://duffel.com/docs/api/overview/making-requests",
             ),
         ),
         "flights_kiwi": (
@@ -214,8 +225,20 @@ def test_catalog_acquisition_guides_use_official_provider_links() -> None:
         ),
         "hotels": (
             (
+                "Hotelbeds API key registration",
+                "https://developer.hotelbeds.com/register/",
+            ),
+            (
                 "Hotelbeds getting started",
                 "https://developer.hotelbeds.com/documentation/getting-started/",
+            ),
+            (
+                "Booking.com affiliate application",
+                "https://partnerships.booking.com/",
+            ),
+            (
+                "Booking.com Demand API prerequisites",
+                "https://developers.booking.com/demand/docs/getting-started/prerequisites",
             ),
             ("Booking.com Demand API", "https://developers.booking.com/demand"),
         ),
@@ -236,9 +259,19 @@ def test_catalog_acquisition_guides_use_official_provider_links() -> None:
             ),
         ),
         "notifications": (
+            ("Telegram BotFather bot creation", "https://t.me/BotFather"),
             ("Telegram BotFather tutorial", "https://core.telegram.org/bots/tutorial"),
         ),
         "calendar": (
+            (
+                "Google Cloud Calendar API enablement",
+                "https://console.cloud.google.com/flows/enableapi"
+                "?apiid=calendar-json.googleapis.com",
+            ),
+            (
+                "Google Cloud OAuth credentials",
+                "https://console.cloud.google.com/apis/credentials",
+            ),
             (
                 "Google Calendar create events guide",
                 "https://developers.google.com/workspace/calendar/api/guides/create-events",
@@ -281,6 +314,8 @@ def test_catalog_acquisition_guides_use_official_provider_links() -> None:
     assert "api key" in hotel_copy
     assert "secret" in hotel_copy
     assert "x-signature" in hotel_copy
+    assert "managed affiliate partner" in hotel_copy
+    assert "affiliate signup does not guarantee demand api access" in hotel_copy
 
     calendar_guide = get_catalog_entry("calendar").guide
     calendar_copy = " ".join(
@@ -474,6 +509,48 @@ def test_resolve_integration_state_prefers_stored_credentials(
     assert resolved.runtime_connector == "local-safe-flights_amadeus"
     assert resolved.enabled is False
     assert resolved.feature_flags == {"bootstrap": True, "stored": True}
+
+
+def test_non_secret_catalog_fields_round_trip_clear_while_secrets_stay_masked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_settings(monkeypatch)
+    credentials = {
+        "delivery_mode": "telegram_bot",
+        "smtp_host": "smtp.example.com",
+        "smtp_port": "2525",
+        "smtp_from_address": "alerts@example.com",
+        "telegram_bot_token": "123456:super-secret-token",
+        "unlisted_internal_value": "must-stay-secret",
+    }
+    record = PlatformIntegration(
+        key="notifications",
+        encrypted_credentials=encrypt_with_app_secret(
+            plaintext=json.dumps(credentials),
+            aad="platform-integration:notifications",
+        ),
+        environment=IntegrationEnvironment.LIVE,
+        enabled=True,
+        feature_flags_json={},
+    )
+
+    resolved = resolve_integration_state(
+        db=_NoopSession(),
+        key="notifications",
+        record=record,
+    )
+    response = AdminIntegrationResponse.model_validate(asdict(resolved))
+
+    assert response.credentials_masked["delivery_mode"] == "telegram_bot"
+    assert response.credentials_masked["smtp_host"] == "smtp.example.com"
+    assert response.credentials_masked["smtp_port"] == "2525"
+    assert response.credentials_masked["smtp_from_address"] == "alerts@example.com"
+    assert response.credentials_masked["telegram_bot_token"] != credentials[
+        "telegram_bot_token"
+    ]
+    assert response.credentials_masked["unlisted_internal_value"] != credentials[
+        "unlisted_internal_value"
+    ]
 
 
 def test_merge_credential_updates_keeps_masked_values() -> None:

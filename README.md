@@ -78,11 +78,11 @@ After signing in as an administrator:
 
 Official acquisition guidance:
 
-- **Flights:** follow the official [Amadeus quick start](https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/quick-start/) or [Duffel flights guide](https://duffel.com/docs/guides/getting-started-with-flights). New Kiwi Tequila partnerships are invitation-only according to [Kiwi's official announcement](https://media.kiwi.com/articles-and-interviews/better-for-business-kiwi-com-takes-a-new-approach-to-partnerships/).
-- **Hotels:** [Hotelbeds](https://developer.hotelbeds.com/documentation/getting-started/) requires an API Key and Secret for X-Signature authentication. The [Booking.com Demand API](https://developers.booking.com/demand) has separate access and does not share Hotelbeds credentials.
+- **Flights:** register in the [Amadeus developer portal](https://developers.amadeus.com/) and use its [application quick start](https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/quick-start/), or start from [Duffel signup](https://duffel.com/) and its [dashboard token setup](https://duffel.com/guides/getting-started). New Kiwi Tequila partnerships are invitation-only according to [Kiwi's official announcement](https://media.kiwi.com/articles-and-interviews/better-for-business-kiwi-com-takes-a-new-approach-to-partnerships/).
+- **Hotels:** [register for a Hotelbeds API key](https://developer.hotelbeds.com/register/) and follow its [getting-started guide](https://developer.hotelbeds.com/documentation/getting-started/); Hotelbeds requires both the key and Secret for X-Signature authentication. Booking.com starts with its [affiliate application](https://partnerships.booking.com/), but affiliate signup does not guarantee API access: Demand API requires confirmed **Managed Affiliate Partner** status, Partner Centre access, and the documented [Demand API prerequisites](https://developers.booking.com/demand/docs/getting-started/prerequisites).
 - **Booking:** direct Duffel setup uses `access_token`, Amadeus uses `client_id` and `client_secret`, and Kiwi uses `api_key` after invitation-only access. A compatible shared provider profile can supply the same credential shape.
-- **Notifications:** `log_only` and a local Mailpit sink need no universal API key. Hosted SMTP can send external email. A bot created with the official [BotFather tutorial](https://core.telegram.org/bots/tutorial) can send external Telegram messages.
-- **Calendar:** follow Google's [create events guide](https://developers.google.com/workspace/calendar/api/guides/create-events), configure OAuth consent and a client, and authorize `https://www.googleapis.com/auth/calendar`. Google mode can create and delete live events.
+- **Notifications:** `log_only` and a local Mailpit sink need no universal API key. Hosted SMTP can send external email. Create a bot with [BotFather](https://t.me/BotFather), then follow the official [BotFather tutorial](https://core.telegram.org/bots/tutorial); Telegram mode can send external messages.
+- **Calendar:** [enable the Calendar API](https://console.cloud.google.com/flows/enableapi?apiid=calendar-json.googleapis.com), create [Google Cloud OAuth credentials](https://console.cloud.google.com/apis/credentials), and follow Google's [create events guide](https://developers.google.com/workspace/calendar/api/guides/create-events). Authorize `https://www.googleapis.com/auth/calendar`; Google mode can create and delete live events.
 
 Saving credentials records configuration; it does not turn a simulated flight, hotel, or booking adapter into a live provider implementation. The guarded booking UI uses the real booking endpoint, but a TRAMP-Stamp is awarded only when the configured executor returns a successful, non-simulated live booking. Hosted SMTP, Telegram, and Google Calendar are different: those modes can create external side effects when configured and invoked.
 
@@ -112,6 +112,7 @@ The selective purge removes simulated observations, deals, attempts, bookings, r
 ## Safe operations
 
 - Notification and calendar modes default to `log_only`.
+- Simulated search, booking, cancellation, and local disruption activity is forced to log-only delivery even when an external transport is configured.
 - Most connection tests validate local credential presence and shape; the UI identifies checks that make provider network requests.
 - Hosted SMTP, Telegram, Google Calendar, and a genuinely live booking provider must be treated as external side effects.
 - Health is available at `GET /api/v1/health`.
