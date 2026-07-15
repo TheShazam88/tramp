@@ -135,12 +135,18 @@ export function BookingsPage() {
             ["booked", "ticketed"].includes(
               (booking.bookingStatus ?? "").toLowerCase(),
             );
+          const bookingTitleId = `booking-${booking.id}-title`;
 
           return (
-            <Surface key={booking.id} className="watch-card">
+            <Surface
+              key={booking.id}
+              className="watch-card"
+              role="article"
+              aria-labelledby={bookingTitleId}
+            >
               <div className="watch-topline">
                 <div>
-                  <h3>{booking.title}</h3>
+                  <h3 id={bookingTitleId}>{booking.title}</h3>
                   <p className="item-copy">
                     {booking.when} · {booking.provider}
                   </p>
@@ -316,8 +322,15 @@ export function BookingsPage() {
                 </Surface>
               ) : null}
 
-              <details className="form-disclosure">
-                <summary>Local test tools</summary>
+              <details
+                className="form-disclosure"
+                aria-label={`Local test tools for ${booking.title}`}
+              >
+                <summary
+                  aria-label={`Local test tools toggle for ${booking.title}`}
+                >
+                  Local test tools
+                </summary>
                 <div className="stack-tight form-grid-gap-top">
                   <p className="helper-copy">
                     Local-only simulation controls. These test endpoints do not represent production

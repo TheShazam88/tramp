@@ -152,21 +152,30 @@ async function mockAdminApi(page: Page) {
 
 test.use({ viewport: { width: 320, height: 700 } });
 
-test("purge preview stays reachable at a narrow viewport", async ({ page }) => {
+test("purge preview stays reachable at a narrow viewport", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: "http://127.0.0.1:4173",
+  });
   const { purgeRequests } = await mockAdminApi(page);
   await page.goto("/admin/integrations/runtime");
 
+  const purgePanel = page.getByRole("region", {
+    name: "Purge test data controls",
+  });
   await expect(
-    page.getByRole("heading", { name: "Purge test data" }),
+    purgePanel.getByRole("heading", { name: "Purge test data" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Preview purge" }).click();
+  await purgePanel.getByRole("button", { name: "Preview purge" }).click();
 
-  const previewStatus = page.getByRole("status", {
+  const previewStatus = purgePanel.getByRole("status", {
     name: "Purge preview ready",
   });
   await expect(previewStatus).toBeFocused();
 
-  const countGroup = page.getByRole("group", { name: "Purge counts" });
+  const countGroup = purgePanel.getByRole("group", { name: "Purge counts" });
   for (const label of [
     "Audit log",
     "Booking attempts",
@@ -190,15 +199,17 @@ test("purge preview stays reachable at a narrow viewport", async ({ page }) => {
     await expect(count).toBeVisible();
   }
 
-  const overflow = await countGroup.locator("dl").evaluate((element) => {
-    const style = window.getComputedStyle(element);
-    return {
-      clientHeight: element.clientHeight,
-      maxHeight: style.maxHeight,
-      overflowY: style.overflowY,
-      scrollHeight: element.scrollHeight,
-    };
-  });
+  const overflow = await countGroup
+    .getByLabel("Purge count details")
+    .evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return {
+        clientHeight: element.clientHeight,
+        maxHeight: style.maxHeight,
+        overflowY: style.overflowY,
+        scrollHeight: element.scrollHeight,
+      };
+    });
   expect(overflow.maxHeight).toBe("none");
   expect(overflow.overflowY).toBe("visible");
   expect(overflow.scrollHeight).toBeLessThanOrEqual(overflow.clientHeight + 1);
@@ -208,25 +219,33 @@ test("purge preview stays reachable at a narrow viewport", async ({ page }) => {
 
   await previewStatus.focus();
   await page.keyboard.press("Tab");
-  await expect(
-    page.getByRole("textbox", {
-      name: "Required purge confirmation phrase",
-    }),
-  ).toBeFocused();
-  await expect(
-    page.getByRole("textbox", {
-      name: "Required purge confirmation phrase",
-    }),
-  ).toHaveValue("PURGE TEST DATA");
+  const confirmationRegion = purgePanel.getByRole("region", {
+    name: "Purge confirmation",
+  });
+  const phrase = confirmationRegion.getByRole("textbox", {
+    name: "Required purge confirmation phrase",
+  });
+  await expect(phrase).toBeFocused();
+  await expect(phrase).toHaveValue("PURGE TEST DATA");
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Copy phrase" })).toBeFocused();
+  const copyButton = confirmationRegion.getByRole("button", {
+    name: "Copy phrase",
+  });
+  await expect(copyButton).toBeFocused();
+  await copyButton.click();
+  await expect(
+    confirmationRegion.getByRole("status", { name: "Copy status" }),
+  ).toHaveText("Confirmation phrase copied.");
+  const copiedPhrase = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copiedPhrase).toBe("PURGE TEST DATA");
+
   await page.keyboard.press("Tab");
-  const confirmation = page.getByRole("textbox", {
+  const confirmation = confirmationRegion.getByRole("textbox", {
     name: "Type the confirmation phrase",
   });
   await expect(confirmation).toBeFocused();
 
-  const purge = page.getByRole("button", {
+  const purge = confirmationRegion.getByRole("button", {
     name: "Purge test data permanently",
   });
   await purge.scrollIntoViewIfNeeded();
@@ -235,12 +254,12 @@ test("purge preview stays reachable at a narrow viewport", async ({ page }) => {
   await expect(purge).toBeDisabled();
   await confirmation.fill("PURGE TEST DATA ");
   await expect(purge).toBeDisabled();
-  await confirmation.fill("PURGE TEST DATA");
+  await confirmation.fill(copiedPhrase);
   await expect(purge).toBeEnabled();
   await purge.click();
 
   await expect(
-    page.getByRole("status", { name: "Purge succeeded" }),
+    purgePanel.getByRole("status", { name: "Purge succeeded" }),
   ).toBeFocused();
   expect(purgeRequests).toEqual([
     {
@@ -248,4 +267,41 @@ test("purge preview stays reachable at a narrow viewport", async ({ page }) => {
       plan_digest: "a".repeat(64),
     },
   ]);
+});
+
+test("copy phrase fallback selects the full phrase", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await mockAdminApi(page);
+  await page.goto("/admin/integrations/runtime");
+
+  const purgePanel = page.getByRole("region", {
+    name: "Purge test data controls",
+  });
+  await purgePanel.getByRole("button", { name: "Preview purge" }).click();
+  const confirmationRegion = purgePanel.getByRole("region", {
+    name: "Purge confirmation",
+  });
+  const phrase = confirmationRegion.getByRole("textbox", {
+    name: "Required purge confirmation phrase",
+  });
+
+  await confirmationRegion.getByRole("button", { name: "Copy phrase" }).click();
+
+  await expect(
+    confirmationRegion.getByRole("status", { name: "Copy status" }),
+  ).toHaveText(
+    "Clipboard access is unavailable. The phrase is selected for manual copy.",
+  );
+  await expect(phrase).toBeFocused();
+  expect(
+    await phrase.evaluate((element) => {
+      const input = element as HTMLInputElement;
+      return [input.selectionStart, input.selectionEnd];
+    }),
+  ).toEqual([0, "PURGE TEST DATA".length]);
 });

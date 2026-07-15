@@ -87,6 +87,19 @@ async function mockWorkflowApi(page: Page) {
               },
             ],
           },
+          {
+            id: "booking-2",
+            deal_id: "deal-2",
+            watch_id: "watch-2",
+            provider: "Hotelbeds",
+            provider_booking_ref: "HTL-456",
+            status: "ticketed",
+            amount_charged: 420000,
+            currency: "JPY",
+            title: "Family stay in Bali",
+            when: "March flexible",
+            disruptions: [],
+          },
         ],
       });
       return;
@@ -108,21 +121,25 @@ for (const viewport of [
     await mockWorkflowApi(page);
     await page.goto("/watches/new");
 
-    const flightDetails = page
-      .locator("details.form-disclosure")
-      .filter({ hasText: "Advanced flight preferences" });
-    const pricingDetails = page
-      .locator("details.form-disclosure")
-      .filter({ hasText: "Pricing and monitoring controls" });
+    const flightDetails = page.getByRole("group", {
+      name: "Advanced flight preferences",
+    });
+    const pricingDetails = page.getByRole("group", {
+      name: "Pricing and monitoring controls",
+    });
     await expect(flightDetails).not.toHaveAttribute("open");
     await expect(pricingDetails).not.toHaveAttribute("open");
 
-    const flightSummary = flightDetails.locator(":scope > summary");
+    const flightSummary = flightDetails.getByLabel(
+      "Advanced flight preferences toggle",
+    );
     await flightSummary.focus();
     await page.keyboard.press("Enter");
     await expect(flightDetails).toHaveAttribute("open", "");
 
-    await pricingDetails.locator(":scope > summary").click();
+    await pricingDetails
+      .getByLabel("Pricing and monitoring controls toggle")
+      .click();
     const lastAdvancedField = page.getByLabel("Late-booking urgency at");
     await lastAdvancedField.scrollIntoViewIfNeeded();
     await expect(lastAdvancedField).toBeVisible();
@@ -131,20 +148,26 @@ for (const viewport of [
     ).toBeLessThanOrEqual(viewport.width);
 
     await page.goto("/bookings");
-    const bookingCard = page.locator(".watch-card").filter({
-      has: page.getByRole("heading", {
-        name: /Tokyo (?:->|to) Singapore/,
-      }),
+    const bookingCards = page.getByRole("article");
+    await expect(bookingCards).toHaveCount(2);
+    for (let index = 0; index < 2; index += 1) {
+      const reviewAction = bookingCards
+        .nth(index)
+        .getByRole("link", { name: "Open deal review" });
+      await expect(reviewAction).toHaveCount(1);
+      await expect(reviewAction).toBeVisible();
+    }
+
+    const bookingCard = page.getByRole("article", {
+      name: "Tokyo to Singapore",
     });
-    await expect(bookingCard).toHaveCount(1);
-    await expect(
-      bookingCard.getByRole("link", { name: "Open deal review" }),
-    ).toHaveCount(1);
-    const localTools = bookingCard
-      .locator("details.form-disclosure")
-      .filter({ hasText: "Local test tools" });
+    const localTools = bookingCard.getByRole("group", {
+      name: "Local test tools for Tokyo to Singapore",
+    });
     await expect(localTools).not.toHaveAttribute("open");
-    await localTools.locator(":scope > summary").click();
+    await localTools
+      .getByLabel("Local test tools toggle for Tokyo to Singapore")
+      .click();
     await expect(
       bookingCard.getByRole("button", { name: "Simulate disruption" }),
     ).toBeVisible();

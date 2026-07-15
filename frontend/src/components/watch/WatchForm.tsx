@@ -469,8 +469,16 @@ export function WatchForm({
         </div>
       </Surface>
 
-      <details className="form-disclosure">
-        <summary onKeyDown={toggleDisclosureFromKeyboard}>Advanced flight preferences</summary>
+      <details
+        className="form-disclosure"
+        aria-label="Advanced flight preferences"
+      >
+        <summary
+          aria-label="Advanced flight preferences toggle"
+          onKeyDown={toggleDisclosureFromKeyboard}
+        >
+          Advanced flight preferences
+        </summary>
         <div className="form-grid form-grid-gap-top">
           <div className="field-stack">
             <label htmlFor="watch-cabin">Cabin</label>
@@ -584,8 +592,16 @@ export function WatchForm({
         </div>
       </details>
 
-      <details className="form-disclosure">
-        <summary onKeyDown={toggleDisclosureFromKeyboard}>Pricing and monitoring controls</summary>
+      <details
+        className="form-disclosure"
+        aria-label="Pricing and monitoring controls"
+      >
+        <summary
+          aria-label="Pricing and monitoring controls toggle"
+          onKeyDown={toggleDisclosureFromKeyboard}
+        >
+          Pricing and monitoring controls
+        </summary>
         <div className="form-grid form-grid-gap-top">
           <div className="field-stack">
             <label htmlFor="watch-status">Status</label>

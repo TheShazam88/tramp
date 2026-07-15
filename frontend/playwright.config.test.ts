@@ -18,6 +18,7 @@ describe("Playwright web server configuration", () => {
 
       expect(webServer?.cwd).toBe(frontendDirectory);
       expect(webServer?.env?.VITE_API_MODE).toBe("live");
+      expect(webServer?.reuseExistingServer).toBe(false);
     } finally {
       process.chdir(originalDirectory);
     }

@@ -27,10 +27,18 @@ function renderWatchForm(initialValue: WatchDraft = structuredClone(newWatchDraf
 describe("WatchForm progressive disclosure", () => {
   it("starts advanced groups collapsed and opens them from the keyboard", async () => {
     const { user } = renderWatchForm();
-    const flightSummary = screen.getByText("Advanced flight preferences");
-    const flightDetails = flightSummary.closest("details");
-    const pricingSummary = screen.getByText("Pricing and monitoring controls");
-    const pricingDetails = pricingSummary.closest("details");
+    const flightDetails = screen.getByRole("group", {
+      name: "Advanced flight preferences",
+    });
+    const flightSummary = within(flightDetails).getByLabelText(
+      "Advanced flight preferences toggle",
+    );
+    const pricingDetails = screen.getByRole("group", {
+      name: "Pricing and monitoring controls",
+    });
+    const pricingSummary = within(pricingDetails).getByLabelText(
+      "Pricing and monitoring controls toggle",
+    );
 
     expect(flightDetails).not.toHaveAttribute("open");
     expect(pricingDetails).not.toHaveAttribute("open");
@@ -48,13 +56,13 @@ describe("WatchForm progressive disclosure", () => {
       "Avoid red-eye flights.",
       "Prefer refundable inventory when possible.",
     ]) {
-      expect(within(flightDetails as HTMLElement).getByLabelText(label)).toBeVisible();
+      expect(within(flightDetails).getByLabelText(label)).toBeVisible();
     }
     expect(
-      within(flightDetails as HTMLElement).getByText("Preferred airlines"),
+      within(flightDetails).getByText("Preferred airlines"),
     ).toBeVisible();
     expect(
-      within(flightDetails as HTMLElement).getByText("Preferred alliances"),
+      within(flightDetails).getByText("Preferred alliances"),
     ).toBeVisible();
 
     pricingSummary.focus();
@@ -73,7 +81,7 @@ describe("WatchForm progressive disclosure", () => {
       "Include car search context when it is available.",
       "Include Airbnb discovery if this backend supports it.",
     ]) {
-      expect(within(pricingDetails as HTMLElement).getByLabelText(label)).toBeVisible();
+      expect(within(pricingDetails).getByLabelText(label)).toBeVisible();
     }
   });
 

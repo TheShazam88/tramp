@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +26,19 @@ const bookings: BookingsViewData = {
         { id: "disruption-resolved", status: "resolved", type: "delay" },
         { id: "disruption-open", status: "open", type: "cancellation" },
       ],
+    },
+    {
+      id: "booking-2",
+      title: "Family stay in Bali",
+      when: "March flexible",
+      status: "Cancellation processing",
+      amount: "JPY 420,000",
+      provider: "Hotelbeds",
+      actions: ["Open deal review", "Review cancellation policy"],
+      bookingStatus: "ticketed",
+      cancellationStatus: "processing",
+      dealId: "deal-2",
+      disruptions: [],
     },
   ],
 };
@@ -77,33 +90,52 @@ describe("BookingsPage local test tools", () => {
   it("keeps normal actions visible and runs disruption tools only after disclosure", async () => {
     const { user } = renderBookings();
 
-    expect(await screen.findByRole("link", { name: "Open deal review" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "View itinerary" })).toBeVisible();
+    const bookingCards = await screen.findAllByRole("article");
+    expect(bookingCards).toHaveLength(2);
+    for (const card of bookingCards) {
+      const reviewActions = within(card).getAllByRole("link", {
+        name: "Open deal review",
+      });
+      expect(reviewActions).toHaveLength(1);
+      expect(reviewActions[0]).toBeVisible();
+    }
 
-    const summary = screen.getByText("Local test tools");
-    const details = summary.closest("details");
+    const primaryCard = screen.getByRole("article", {
+      name: "Tokyo to Singapore",
+    });
+    expect(within(primaryCard).getByRole("link", { name: "View itinerary" })).toBeVisible();
+    const details = within(primaryCard).getByRole("group", {
+      name: "Local test tools for Tokyo to Singapore",
+    });
+    const summary = within(details).getByLabelText(
+      "Local test tools toggle for Tokyo to Singapore",
+    );
     expect(details).not.toHaveAttribute("open");
     expect(
-      screen.getByRole("button", { name: "Simulate disruption" }),
+      within(primaryCard).getByRole("button", { name: "Simulate disruption" }),
     ).not.toBeVisible();
 
     await user.click(summary);
 
     expect(details).toHaveAttribute("open");
     expect(
-      screen.getByText(
+      within(primaryCard).getByText(
         "Local-only simulation controls. These test endpoints do not represent production provider behavior.",
       ),
     ).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Simulate disruption" }));
+    await user.click(
+      within(primaryCard).getByRole("button", { name: "Simulate disruption" }),
+    );
     await waitFor(() => {
       expect(
         vi.mocked(travelWatchApi.triggerBookingDisruption).mock.calls[0]?.[0],
       ).toBe("booking-1");
     });
 
-    await user.click(screen.getByRole("button", { name: "Resolve disruption" }));
+    await user.click(
+      within(primaryCard).getByRole("button", { name: "Resolve disruption" }),
+    );
     await waitFor(() => {
       expect(vi.mocked(travelWatchApi.resolveDisruption).mock.calls[0]?.[0]).toBe(
         "disruption-open",

@@ -101,7 +101,10 @@ function PurgeSummary({
     >
       <h3>{heading}</h3>
       <div role="group" aria-label="Purge counts">
-        <dl className="key-value-list purge-count-list">
+        <dl
+          className="key-value-list purge-count-list"
+          aria-label="Purge count details"
+        >
           <div>
             <dt>Dry run</dt>
             <dd>{result.dryRun ? "Yes" : "No"}</dd>
@@ -324,7 +327,11 @@ export function PurgeTestDataPanel() {
   };
 
   return (
-    <Surface className="purge-test-data-panel">
+    <Surface
+      className="purge-test-data-panel"
+      role="region"
+      aria-label="Purge test data controls"
+    >
       <SectionHeading
         eyebrow="Destructive maintenance"
         title="Purge test data"
@@ -416,7 +423,11 @@ export function PurgeTestDataPanel() {
           ) : null}
 
           {liveApiMode ? (
-            <div className="form-shell stack-tight">
+            <div
+              className="form-shell stack-tight"
+              role="region"
+              aria-label="Purge confirmation"
+            >
               <h3>Confirm permanent purge</h3>
               <p className="helper-copy">
                 Copy the required phrase, then type it into the separate confirmation
