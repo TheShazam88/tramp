@@ -56,6 +56,9 @@ CANCELLATION_CLASSIFICATION_REVISION = (
 CANCELLATION_SECURITY_REVISION = (
     MIGRATION_ROOT / "20260715_0010_cancellation_security.py"
 )
+STAMP_REASON_CONSTRAINT_REVISION = (
+    MIGRATION_ROOT / "20260715_0011_stamp_reason_constraint.py"
+)
 
 PRE_V2_TABLES = {
     "audit_log",
@@ -249,6 +252,17 @@ def test_0010_cancellation_security_is_fully_reversible() -> None:
     assert 'op.drop_constraint(' in source
 
 
+def test_0011_stamp_reason_constraint_is_forward_idempotent_and_reversible() -> None:
+    source = STAMP_REASON_CONSTRAINT_REVISION.read_text()
+
+    assert 'revision = "20260715_0011"' in source
+    assert 'down_revision = "20260715_0010"' in source
+    assert "IF NOT EXISTS" in source
+    assert "ck_tramp_stamp_ledger_reason" in source
+    assert "reason = 'live_booking_completed'" in source
+    assert "DROP CONSTRAINT IF EXISTS ck_tramp_stamp_ledger_reason" in source
+
+
 def _migration_database_url() -> str:
     database_url = os.environ.get("MIGRATION_TEST_DATABASE_URL")
     if not database_url:
@@ -372,6 +386,17 @@ def _unique_constraint_names(database_url: str, table_name: str) -> set[str]:
         return {
             constraint["name"]
             for constraint in inspect(engine).get_unique_constraints(table_name)
+        }
+    finally:
+        engine.dispose()
+
+
+def _check_constraint_names(database_url: str, table_name: str) -> set[str]:
+    engine = create_engine(database_url)
+    try:
+        return {
+            constraint["name"]
+            for constraint in inspect(engine).get_check_constraints(table_name)
         }
     finally:
         engine.dispose()
@@ -546,8 +571,12 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _enum_labels(database_url, "integration_environment") == ["TEST", "LIVE"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260715_0010"
+    assert _revision(database_url) == "20260715_0011"
     assert "tramp_stamp_ledger" in _table_names(database_url)
+    assert "ck_tramp_stamp_ledger_reason" in _check_constraint_names(
+        database_url,
+        "tramp_stamp_ledger",
+    )
     assert "PENDING_TICKETING" not in _enum_labels(
         database_url, "booking_attempt_status"
     )
@@ -577,7 +606,46 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _table_names(database_url) == ["alembic_version"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260715_0010"
+    assert _revision(database_url) == "20260715_0011"
+
+
+def test_0011_repairs_an_already_upgraded_database_missing_reason_constraint() -> None:
+    database_url = _migration_database_url()
+    _reset_database(database_url)
+    _run_alembic(database_url, "upgrade", "20260715_0010")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE tramp_stamp_ledger "
+                "DROP CONSTRAINT IF EXISTS ck_tramp_stamp_ledger_reason"
+            )
+    finally:
+        engine.dispose()
+    assert "ck_tramp_stamp_ledger_reason" not in _check_constraint_names(
+        database_url,
+        "tramp_stamp_ledger",
+    )
+
+    _run_alembic(database_url, "upgrade", "head")
+    assert _revision(database_url) == "20260715_0011"
+    assert "ck_tramp_stamp_ledger_reason" in _check_constraint_names(
+        database_url,
+        "tramp_stamp_ledger",
+    )
+
+    _run_alembic(database_url, "downgrade", "20260715_0010")
+    assert "ck_tramp_stamp_ledger_reason" not in _check_constraint_names(
+        database_url,
+        "tramp_stamp_ledger",
+    )
+
+    _run_alembic(database_url, "upgrade", "head")
+    assert "ck_tramp_stamp_ledger_reason" in _check_constraint_names(
+        database_url,
+        "tramp_stamp_ledger",
+    )
 
 
 def test_0009_backfills_simulated_parent_and_marks_live_parent_unknown() -> None:
@@ -789,7 +857,7 @@ def test_0005_cleans_interrupted_concurrent_index_before_retry() -> None:
 
     _run_alembic(database_url, "upgrade", "head")
 
-    assert _revision(database_url) == "20260715_0010"
+    assert _revision(database_url) == "20260715_0011"
     assert temporary_index not in _index_names(database_url, "booking_attempts")
     assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
         database_url,
