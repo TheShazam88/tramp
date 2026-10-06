@@ -143,6 +143,54 @@ function getProfileTemplate(providers: IntegrationProvider[], providerKey: strin
   return providers.find((provider) => provider.providerKey === providerKey);
 }
 
+function CredentialFieldList({
+  fields,
+  values,
+  masked,
+  idPrefix,
+  onChange,
+}: {
+  fields: Array<{
+    key: string;
+    label: string;
+    placeholder?: string;
+    helpText?: string;
+    sensitive?: boolean;
+  }>;
+  values: Record<string, string>;
+  masked?: Record<string, unknown> | null;
+  idPrefix: string;
+  onChange: (key: string, value: string) => void;
+}) {
+  return (
+    <>
+      {fields.map((field) => (
+        <label
+          key={`${idPrefix}-${field.key}`}
+          className={field.sensitive ? "field-stack field-span-full" : "field-stack"}
+        >
+          <span>{field.label}</span>
+          <input
+            className="text-input"
+            type={field.sensitive ? "password" : "text"}
+            value={values[field.key] ?? ""}
+            placeholder={
+              field.sensitive
+                ? getSensitivePlaceholder(
+                    masked?.[field.key],
+                    field.placeholder || "Type a new value to replace",
+                  )
+                : field.placeholder
+            }
+            onChange={(event) => onChange(field.key, event.target.value)}
+          />
+          {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
+        </label>
+      ))}
+    </>
+  );
+}
+
 function getSensitivePlaceholder(
   maskedValue: unknown,
   fallback: string,
@@ -430,6 +478,10 @@ export function AdminIntegrationsPage() {
             />
             <span>Allow fallback mock data anywhere in TRAMP</span>
           </label>
+          <p className="helper-copy">
+            Key unlock: {data.runtimeSettings.keyUnlockMode || "not reported"}. Master key source:{" "}
+            {data.runtimeSettings.masterKeySource || "not reported"}. Integration inventory stays on this admin page. The public health check only reports whether the service is up and which inventory mode is active.
+          </p>
           <div className={`notice ${mockDataEnabledDraft ? "notice-value" : "notice-alert"}`}>
             {mockDataEnabledDraft
               ? "ON: TRAMP may show simulated fallback data when live provider data is missing."
@@ -561,37 +613,24 @@ export function AdminIntegrationsPage() {
                     providerName={template?.name ?? titleize(profile.providerKey)}
                     guide={template?.guide}
                   />
-                  {template?.credentialFields.map((field) => (
-                    <label key={`${profile.id}-${field.key}`} className="field-stack">
-                      <span>{field.label}</span>
-                      <input
-                        className="text-input"
-                        type={field.sensitive ? "password" : "text"}
-                        value={draft.credentials[field.key] ?? ""}
-                        placeholder={
-                          field.sensitive
-                            ? getSensitivePlaceholder(
-                                profile.credentialsMasked?.[field.key],
-                                field.placeholder || "Type a new value to replace",
-                              )
-                            : field.placeholder
-                        }
-                        onChange={(event) =>
-                          setProfileDrafts((current) => ({
-                            ...current,
-                            [profile.id]: {
-                              ...draft,
-                              credentials: {
-                                ...draft.credentials,
-                                [field.key]: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                      {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
-                    </label>
-                  ))}
+                  <CredentialFieldList
+                    fields={template?.credentialFields ?? []}
+                    values={draft.credentials}
+                    masked={profile.credentialsMasked}
+                    idPrefix={profile.id}
+                    onChange={(key, value) =>
+                      setProfileDrafts((current) => ({
+                        ...current,
+                        [profile.id]: {
+                          ...draft,
+                          credentials: {
+                            ...draft.credentials,
+                            [key]: value,
+                          },
+                        },
+                      }))
+                    }
+                  />
                 </div>
               </details>
               <div className="panel-actions">
@@ -664,27 +703,20 @@ export function AdminIntegrationsPage() {
               providerName={newProfileTemplate?.name ?? titleize(newProfileDraft.providerKey)}
               guide={newProfileTemplate?.guide}
             />
-            {newProfileTemplate?.credentialFields.map((field) => (
-              <label key={`new-${field.key}`} className="field-stack">
-                <span>{field.label}</span>
-                <input
-                  className="text-input"
-                  type={field.sensitive ? "password" : "text"}
-                  value={newProfileDraft.credentials[field.key] ?? ""}
-                  placeholder={field.placeholder}
-                  onChange={(event) =>
-                    setNewProfileDraft((current) => ({
-                      ...current,
-                      credentials: {
-                        ...current.credentials,
-                        [field.key]: event.target.value,
-                      },
-                    }))
-                  }
-                />
-                {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
-              </label>
-            ))}
+            <CredentialFieldList
+              fields={newProfileTemplate?.credentialFields ?? []}
+              values={newProfileDraft.credentials}
+              idPrefix="new-profile"
+              onChange={(key, value) =>
+                setNewProfileDraft((current) => ({
+                  ...current,
+                  credentials: {
+                    ...current.credentials,
+                    [key]: value,
+                  },
+                }))
+              }
+            />
           </div>
           <div className="panel-actions">
             <Button
@@ -902,35 +934,21 @@ export function AdminIntegrationsPage() {
           <CredentialGuide providerName={provider.name} guide={provider.guide} />
           {providerValue === "hotelbeds" ? (
             <div className="form-grid">
-              {hotelbedsFields.map((field) => (
-                <label
-                  key={`${provider.key}-${field.key}`}
-                  className="field-stack field-span-full"
-                >
-                  <span>{field.label}</span>
-                  <input
-                    className="text-input"
-                    type="password"
-                    value={draft.credentials[field.key] ?? ""}
-                    placeholder={getSensitivePlaceholder(
-                      provider.credentialsMasked?.[field.key],
-                      field.placeholder || `Paste ${field.label}`,
-                    )}
-                    onChange={(event) =>
-                      updateConnectorDraft(provider.key, (current) => ({
-                        ...current,
-                        credentials: {
-                          ...current.credentials,
-                          [field.key]: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                  {field.helpText ? (
-                    <p className="helper-copy">{field.helpText}</p>
-                  ) : null}
-                </label>
-              ))}
+              <CredentialFieldList
+                fields={hotelbedsFields}
+                values={draft.credentials}
+                masked={provider.credentialsMasked}
+                idPrefix={provider.key}
+                onChange={(key, value) =>
+                  updateConnectorDraft(provider.key, (current) => ({
+                    ...current,
+                    credentials: {
+                      ...current.credentials,
+                      [key]: value,
+                    },
+                  }))
+                }
+              />
             </div>
           ) : providerValue ? (
             <div className="notice notice-alert">
@@ -1072,40 +1090,23 @@ export function AdminIntegrationsPage() {
           <div className="form-shell">
             <p className="field-label">SMTP connection</p>
             <div className="form-grid">
-              {["smtp_host", "smtp_port", "smtp_from_address", "smtp_username", "smtp_password"].map((fieldKey) => {
-                const field = provider.credentialFields.find((entry) => entry.key === fieldKey);
-                if (!field) {
-                  return null;
+              <CredentialFieldList
+                fields={["smtp_host", "smtp_port", "smtp_from_address", "smtp_username", "smtp_password"].flatMap(
+                  (fieldKey) => {
+                    const field = provider.credentialFields.find((entry) => entry.key === fieldKey);
+                    return field ? [field] : [];
+                  },
+                )}
+                values={draft.credentials}
+                masked={provider.credentialsMasked}
+                idPrefix={provider.key}
+                onChange={(key, value) =>
+                  updateConnectorDraft(provider.key, (current) => ({
+                    ...current,
+                    credentials: { ...current.credentials, [key]: value },
+                  }))
                 }
-                return (
-                  <label key={`${provider.key}-${field.key}`} className="field-stack">
-                    <span>{field.label}</span>
-                    <input
-                      className="text-input"
-                      type={field.sensitive ? "password" : "text"}
-                      value={draft.credentials[field.key] ?? ""}
-                      placeholder={
-                        field.sensitive
-                          ? getSensitivePlaceholder(
-                              provider.credentialsMasked?.[field.key],
-                              field.placeholder || "Type a new value to replace",
-                            )
-                          : field.placeholder
-                      }
-                      onChange={(event) =>
-                        updateConnectorDraft(provider.key, (current) => ({
-                          ...current,
-                          credentials: {
-                            ...current.credentials,
-                            [field.key]: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
-                  </label>
-                );
-              })}
+              />
             </div>
           </div>
         ) : null}
@@ -1114,32 +1115,18 @@ export function AdminIntegrationsPage() {
           <div className="form-shell">
             <p className="field-label">Telegram bot connection</p>
             <div className="form-grid">
-              {provider.credentialFields
-                .filter((field) => field.key === "telegram_bot_token")
-                .map((field) => (
-                  <label key={`${provider.key}-${field.key}`} className="field-stack field-span-full">
-                    <span>{field.label}</span>
-                    <input
-                      className="text-input"
-                      type="password"
-                      value={draft.credentials[field.key] ?? ""}
-                      placeholder={getSensitivePlaceholder(
-                        provider.credentialsMasked?.[field.key],
-                        field.placeholder || "Paste the Telegram bot token",
-                      )}
-                      onChange={(event) =>
-                        updateConnectorDraft(provider.key, (current) => ({
-                          ...current,
-                          credentials: {
-                            ...current.credentials,
-                            [field.key]: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
-                  </label>
-                ))}
+              <CredentialFieldList
+                fields={provider.credentialFields.filter((field) => field.key === "telegram_bot_token")}
+                values={draft.credentials}
+                masked={provider.credentialsMasked}
+                idPrefix={provider.key}
+                onChange={(key, value) =>
+                  updateConnectorDraft(provider.key, (current) => ({
+                    ...current,
+                    credentials: { ...current.credentials, [key]: value },
+                  }))
+                }
+              />
             </div>
           </div>
         ) : null}
@@ -1348,39 +1335,18 @@ export function AdminIntegrationsPage() {
             ) : null}
             {visibleDirectFields.length > 0 ? (
               <div className="form-grid">
-                {visibleDirectFields.map((field) => (
-                  <label
-                    key={`${provider.key}-${field.key}`}
-                    className="field-stack field-span-full"
-                  >
-                    <span>{field.label}</span>
-                    <input
-                      className="text-input"
-                      type={field.sensitive ? "password" : "text"}
-                      value={draft.credentials[field.key] ?? ""}
-                      placeholder={
-                        field.sensitive
-                          ? getSensitivePlaceholder(
-                              provider.credentialsMasked?.[field.key],
-                              field.placeholder || "Type a new value to replace",
-                            )
-                          : field.placeholder
-                      }
-                      onChange={(event) =>
-                        updateConnectorDraft(provider.key, (current) => ({
-                          ...current,
-                          credentials: {
-                            ...current.credentials,
-                            [field.key]: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    {field.helpText ? (
-                      <p className="helper-copy">{field.helpText}</p>
-                    ) : null}
-                  </label>
-                ))}
+                <CredentialFieldList
+                  fields={visibleDirectFields}
+                  values={draft.credentials}
+                  masked={provider.credentialsMasked}
+                  idPrefix={provider.key}
+                  onChange={(key, value) =>
+                    updateConnectorDraft(provider.key, (current) => ({
+                      ...current,
+                      credentials: { ...current.credentials, [key]: value },
+                    }))
+                  }
+                />
               </div>
             ) : (
               <div className="notice notice-alert">
@@ -1529,36 +1495,20 @@ export function AdminIntegrationsPage() {
           <div className="form-shell">
             <p className="field-label">Google Calendar connection</p>
             <div className="form-grid">
-              {provider.credentialFields
-                .filter((field) => field.key === "calendar_id" || field.key === "access_token")
-                .map((field) => (
-                  <label key={`${provider.key}-${field.key}`} className={`field-stack ${field.key === "access_token" ? "field-span-full" : ""}`}>
-                    <span>{field.label}</span>
-                    <input
-                      className="text-input"
-                      type={field.sensitive ? "password" : "text"}
-                      value={draft.credentials[field.key] ?? ""}
-                      placeholder={
-                        field.sensitive
-                          ? getSensitivePlaceholder(
-                              provider.credentialsMasked?.[field.key],
-                              field.placeholder || "Type a new value to replace",
-                            )
-                          : field.placeholder
-                      }
-                      onChange={(event) =>
-                        updateConnectorDraft(provider.key, (current) => ({
-                          ...current,
-                          credentials: {
-                            ...current.credentials,
-                            [field.key]: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
-                  </label>
-                ))}
+              <CredentialFieldList
+                fields={provider.credentialFields.filter(
+                  (field) => field.key === "calendar_id" || field.key === "access_token",
+                )}
+                values={draft.credentials}
+                masked={provider.credentialsMasked}
+                idPrefix={provider.key}
+                onChange={(key, value) =>
+                  updateConnectorDraft(provider.key, (current) => ({
+                    ...current,
+                    credentials: { ...current.credentials, [key]: value },
+                  }))
+                }
+              />
             </div>
           </div>
         ) : (
@@ -1788,34 +1738,18 @@ export function AdminIntegrationsPage() {
                 {usingSharedProfile ? "Advanced connector-only overrides" : "Connector-specific credentials"}
               </p>
               <div className="form-grid">
-                {provider.credentialFields.map((field) => (
-                  <label key={`${provider.key}-${field.key}`} className="field-stack">
-                    <span>{field.label}</span>
-                    <input
-                      className="text-input"
-                      type={field.sensitive ? "password" : "text"}
-                      value={draft.credentials[field.key] ?? ""}
-                      placeholder={
-                        field.sensitive
-                          ? getSensitivePlaceholder(
-                              provider.credentialsMasked?.[field.key],
-                              field.placeholder || "Type a new value to replace",
-                            )
-                          : field.placeholder
-                      }
-                      onChange={(event) =>
-                        updateConnectorDraft(provider.key, (current) => ({
-                          ...current,
-                          credentials: {
-                            ...current.credentials,
-                            [field.key]: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
-                  </label>
-                ))}
+                <CredentialFieldList
+                  fields={provider.credentialFields}
+                  values={draft.credentials}
+                  masked={provider.credentialsMasked}
+                  idPrefix={provider.key}
+                  onChange={(key, value) =>
+                    updateConnectorDraft(provider.key, (current) => ({
+                      ...current,
+                      credentials: { ...current.credentials, [key]: value },
+                    }))
+                  }
+                />
               </div>
             </div>
           </>
@@ -1942,34 +1876,18 @@ export function AdminIntegrationsPage() {
           <summary className="multi-select-summary">Credential overrides</summary>
           <div className="multi-select-panel">
             {provider.credentialFields.length > 0 ? (
-              provider.credentialFields.map((field) => (
-                <label key={`${provider.key}-${field.key}`} className="field-stack">
-                  <span>{field.label}</span>
-                  <input
-                    className="text-input"
-                    type={field.sensitive ? "password" : "text"}
-                    value={draft.credentials[field.key] ?? ""}
-                    placeholder={
-                      field.sensitive
-                        ? getSensitivePlaceholder(
-                            provider.credentialsMasked?.[field.key],
-                            field.placeholder || "Type a new value to replace",
-                          )
-                        : field.placeholder
-                    }
-                    onChange={(event) =>
-                      updateConnectorDraft(provider.key, (current) => ({
-                        ...current,
-                        credentials: {
-                          ...current.credentials,
-                          [field.key]: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                  {field.helpText ? <p className="helper-copy">{field.helpText}</p> : null}
-                </label>
-              ))
+              <CredentialFieldList
+                fields={provider.credentialFields}
+                values={draft.credentials}
+                masked={provider.credentialsMasked}
+                idPrefix={provider.key}
+                onChange={(key, value) =>
+                  updateConnectorDraft(provider.key, (current) => ({
+                    ...current,
+                    credentials: { ...current.credentials, [key]: value },
+                  }))
+                }
+              />
             ) : (
               <p className="helper-copy">This connector currently relies on its linked profile or provider defaults.</p>
             )}

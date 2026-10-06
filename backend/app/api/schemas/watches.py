@@ -298,6 +298,7 @@ class WatchDashboardCardResponse(BaseModel):
     best_now: str = Field(serialization_alias="bestNow")
     insight: str
     cadence: str
+    last_searched_at: datetime | None = Field(default=None, serialization_alias="lastSearchedAt")
     deal_id: str | None = None
     current_deal_status: str | None = None
     search_label: str | None = None

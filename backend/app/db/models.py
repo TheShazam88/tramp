@@ -382,6 +382,7 @@ class UserPreference(UUIDPrimaryKeyMixin, Base):
     )
     quiet_hours_start: Mapped[time | None] = mapped_column(Time)
     quiet_hours_end: Mapped[time | None] = mapped_column(Time)
+    quiet_hours_timezone: Mapped[str | None] = mapped_column(String(64))
 
 
 class TripTemplate(UUIDPrimaryKeyMixin, Base):

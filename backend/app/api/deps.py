@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import Environment, get_settings
 from app.db.models import User, UserRole
 from app.db.session import get_db_session
 from app.security.tokens import SignedTokenService
@@ -27,7 +27,7 @@ def set_session_cookie(*, response: Response, token: str, expires_at: datetime) 
         value=token,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=settings.environment != Environment.LOCAL,
         max_age=max_age,
         expires=expires_at,
         path="/",
@@ -36,7 +36,13 @@ def set_session_cookie(*, response: Response, token: str, expires_at: datetime) 
 
 def clear_session_cookie(response: Response) -> None:
     settings = get_settings()
-    response.delete_cookie(settings.session_cookie_name, path="/")
+    response.delete_cookie(
+        settings.session_cookie_name,
+        path="/",
+        secure=settings.environment != Environment.LOCAL,
+        httponly=True,
+        samesite="lax",
+    )
 
 
 def issue_session_for_user(*, response: Response, user: User, token_service: SignedTokenService) -> None:

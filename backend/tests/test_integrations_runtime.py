@@ -506,7 +506,7 @@ def test_resolve_integration_state_prefers_stored_credentials(
     assert resolved.credentials["workspace"] == "ops"
     assert resolved.credentials_masked["client_id"] != "db-secret"
     assert resolved.credential_source == "stored_override"
-    assert resolved.runtime_connector == "local-safe-flights_amadeus"
+    assert resolved.runtime_connector == "amadeus"
     assert resolved.enabled is False
     assert resolved.feature_flags == {"bootstrap": True, "stored": True}
 
@@ -637,6 +637,7 @@ def test_mock_data_toggle_persists_in_platform_runtime_record() -> None:
 def test_live_inventory_available_reflects_current_connector_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _configure_settings(monkeypatch)
     records = {
         "flights_amadeus": PlatformIntegration(
             key="flights_amadeus",
@@ -665,6 +666,8 @@ def test_live_inventory_available_reflects_current_connector_stack(
         lambda *, db, key: records.get(key),
     )
 
+    assert live_inventory_available(db=object()) is True
+    records["flights_amadeus"].enabled = False
     assert live_inventory_available(db=object()) is False
 
 

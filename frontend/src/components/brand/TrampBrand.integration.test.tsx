@@ -68,6 +68,7 @@ describe("shared TRAMP branding", () => {
     expect(screen.getByText("TRAVEL AMPLIFIER")).toBeVisible();
     expect(screen.getByText("Autonomous travel booking")).toBeVisible();
     expect(screen.getByText("Operator console")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
     const badge = screen.getByLabelText("0 TRAMP-Stamps in your balance");
     expect(badge).toBeVisible();
     expect(badge.querySelector(".tramp-stamp-artwork-static")).toBeInTheDocument();

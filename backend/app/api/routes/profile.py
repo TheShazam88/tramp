@@ -20,6 +20,7 @@ from app.api.schemas.profile import (
     PaymentMethodResponse,
     PaymentMethodUpdateRequest,
     ProfileSummaryResponse,
+    TrampStampHistoryItemResponse,
     TravelerCreateRequest,
     TravelerGroupCreateRequest,
     TravelerGroupResponse,
@@ -48,7 +49,7 @@ from app.db.models import (
 )
 from app.db.session import get_db_session
 from app.security.crypto import decrypt_with_app_secret, encrypt_with_app_secret
-from app.tramp_stamp_service import stamp_balance
+from app.tramp_stamp_service import list_stamp_history, stamp_balance
 from app.travel_readiness import build_household_workspace_summary
 
 router = APIRouter()
@@ -215,6 +216,7 @@ def _serialize_user_preference(preference: UserPreference | None) -> UserPrefere
             default_notify_channel=NotificationChannel.INHERIT,
             quiet_hours_start=None,
             quiet_hours_end=None,
+            quiet_hours_timezone=None,
         )
 
     return UserPreferenceResponse(
@@ -237,6 +239,7 @@ def _serialize_user_preference(preference: UserPreference | None) -> UserPrefere
         default_notify_channel=preference.default_notify_channel,
         quiet_hours_start=preference.quiet_hours_start,
         quiet_hours_end=preference.quiet_hours_end,
+        quiet_hours_timezone=preference.quiet_hours_timezone,
     )
 
 
@@ -484,6 +487,10 @@ def _build_profile_summary(*, db: Session, user: User) -> ProfileSummaryResponse
 
     return ProfileSummaryResponse(
         tramp_stamp_balance=stamp_balance(db=db, user_id=user.id),
+        tramp_stamp_history=[
+            TrampStampHistoryItemResponse.model_validate(item)
+            for item in list_stamp_history(db=db, user_id=user.id)
+        ],
         settings=_serialize_settings(user),
         preferences=_serialize_user_preference(preference),
         travelers=[
@@ -548,6 +555,7 @@ def _apply_user_preference_update(
         "default_notify_channel": "default_notify_channel",
         "quiet_hours_start": "quiet_hours_start",
         "quiet_hours_end": "quiet_hours_end",
+        "quiet_hours_timezone": "quiet_hours_timezone",
     }
     for request_field, model_field in field_mapping.items():
         if request_field in payload.model_fields_set:

@@ -28,7 +28,17 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                 key="client_secret",
                 label="API secret / Client secret",
                 placeholder="Amadeus API secret",
-                help_text="Stored encrypted and used only when the live connector is implemented.",
+                help_text="Stored encrypted. Live mode uses it to request an Amadeus access token.",
+            ),
+            IntegrationCredentialField(
+                key="api_base",
+                label="API base",
+                placeholder="https://test.api.amadeus.com",
+                help_text=(
+                    "Use the test host until Amadeus production access is approved. "
+                    "The only other accepted host is https://api.amadeus.com."
+                ),
+                sensitive=False,
             ),
             IntegrationCredentialField(
                 key="provider",
@@ -47,8 +57,8 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
             ),
         ),
         validation_help=(
-            "Test connection checks local credential presence and shape only. It does not "
-            "call Amadeus."
+            "Test mode checks credential shape locally. Live mode requests an Amadeus "
+            "access token and does not create a booking."
         ),
         guide=IntegrationAcquisitionGuide(
             links=(
@@ -88,12 +98,15 @@ CATALOG: tuple[IntegrationCatalogEntry, ...] = (
                     "Production access is a separate process with eligibility and "
                     "commercial requirements."
                 ),
-                "TRAMP currently keeps this connector simulated, even when live mode is selected.",
+                (
+                    "TRAMP test mode stays on deterministic local offers. "
+                    "Live mode calls Amadeus flight search."
+                ),
             ),
             enables=(
                 "Reusable Amadeus credentials for compatible TRAMP connectors.",
-                "Local credential presence and configuration shape checks.",
-                "Configuration needed for future live Amadeus flight search wiring.",
+                "A live token check when this connector is set to live.",
+                "Live flight-offer search for watches when this connector is enabled.",
             ),
         ),
     ),

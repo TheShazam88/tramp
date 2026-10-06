@@ -624,8 +624,11 @@ def _require_enabled(*, resolved: ResolvedIntegrationConfig, allow_disabled: boo
 def _runtime_connector_name(*, key: str, environment: IntegrationEnvironment) -> str:
     if environment == IntegrationEnvironment.OFF:
         return f"off-{key}"
-    mode = "mock" if environment == IntegrationEnvironment.TEST else "local-safe"
-    return f"{mode}-{key}"
+    if environment == IntegrationEnvironment.TEST:
+        return f"mock-{key}"
+    if key == "flights_amadeus":
+        return "amadeus"
+    return f"local-safe-{key}"
 
 
 def _validate_operating_mode(
@@ -657,6 +660,14 @@ def _validate_credentials(
         ]
         if missing:
             raise ValueError(f"flights_amadeus requires: {', '.join(missing)}.")
+        api_base = str(credentials.get("api_base") or "").strip()
+        if api_base:
+            from app.integrations.amadeus import AmadeusSearchError, resolve_amadeus_base_url
+
+            try:
+                resolve_amadeus_base_url({"api_base": api_base})
+            except AmadeusSearchError as exc:
+                raise ValueError(str(exc)) from exc
         return
 
     if key == "flights_duffel":

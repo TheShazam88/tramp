@@ -53,6 +53,7 @@ from app.integrations.service import (
     get_mock_data_enabled,
     payload_is_simulated,
     provider_is_simulated,
+    runtime_connector_is_simulated,
     source_is_simulated,
 )
 from app.notification_service import (
@@ -67,6 +68,10 @@ from app.service_errors import AuthenticationError, ConflictError
 from app.tramp_stamp_service import award_for_live_booking, stamp_balance
 
 logger = logging.getLogger(__name__)
+
+
+def simulated_connector_blocks_live_deal(*, deal_source: str, connector_name: str) -> bool:
+    return not source_is_simulated(deal_source) and runtime_connector_is_simulated(connector_name)
 IDEMPOTENCY_CLAIM_CONSTRAINT = "uq_booking_attempts_idempotency_key"
 UNRESOLVED_DEAL_CLAIM_INDEX = "ux_booking_attempts_unresolved_deal"
 COMPLETED_BOOKING_STATUSES = {BookingStatus.TICKETED, BookingStatus.BOOKED}
@@ -228,6 +233,21 @@ def approve_and_book(
             error_text="Only proposed deals can be booked.",
             client_message=GENERIC_CONFLICT_MESSAGE,
             conflict_code="conflict",
+        )
+
+    if simulated_connector_blocks_live_deal(
+        deal_source=deal.source,
+        connector_name=getattr(booking_connector, "connector_name", ""),
+    ):
+        _commit_failed_booking_attempt(
+            db=db,
+            booking_attempt=booking_attempt,
+            error_text="Live inventory cannot be booked by a simulated connector.",
+            client_message=(
+                "This deal came from a live provider search. TRAMP will not create a "
+                "simulated ticket for it. Enable a live booking connector before approving it."
+            ),
+            conflict_code="live_booking_unavailable",
         )
 
     booking_attempt.status = BookingAttemptStatus.REVALIDATED

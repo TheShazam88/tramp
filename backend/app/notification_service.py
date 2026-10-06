@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, time, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,6 +28,8 @@ from app.integrations.service import (
     source_is_simulated,
 )
 from app.integrations.types import ResolvedIntegrationConfig
+
+logger = logging.getLogger(__name__)
 
 
 def queue_notification(
@@ -111,7 +115,18 @@ def send_notification_delivery(*, db: Session, delivery_id: UUID) -> Notificatio
     user = db.scalar(select(User).where(User.id == delivery.user_id)) if delivery.user_id else None
     force = bool((delivery.payload_json or {}).get("force"))
     if user and not force and _in_quiet_hours(db=db, user=user):
-        delivery.error_text = "Deferred by quiet hours."
+        preference = db.scalar(select(UserPreference).where(UserPreference.user_id == user.id))
+        send_after = (
+            next_quiet_hours_end(
+                start=preference.quiet_hours_start,
+                end=preference.quiet_hours_end,
+                now=datetime.now(UTC),
+                timezone_name=getattr(preference, "quiet_hours_timezone", None),
+            )
+            if preference and preference.quiet_hours_start and preference.quiet_hours_end
+            else datetime.now(UTC) + timedelta(minutes=15)
+        )
+        _defer_for_quiet_hours(delivery, send_after=send_after)
         db.add(delivery)
         db.commit()
         db.refresh(delivery)
@@ -167,6 +182,77 @@ def send_notification_delivery(*, db: Session, delivery_id: UUID) -> Notificatio
     db.commit()
     db.refresh(delivery)
     return delivery
+
+
+def deliver_due_notifications(*, db: Session, now: datetime | None = None) -> int:
+    current = now or datetime.now(UTC)
+    deliveries = list(
+        db.scalars(
+            select(NotificationDelivery).where(
+                NotificationDelivery.status == NotificationDeliveryStatus.PENDING
+            )
+        )
+    )
+    due_ids = [
+        delivery.id
+        for delivery in deliveries
+        if (send_after := _send_after(delivery)) is not None and send_after <= current
+    ]
+    processed = 0
+    for delivery_id in due_ids:
+        try:
+            send_notification_delivery(db=db, delivery_id=delivery_id)
+            processed += 1
+        except Exception:  # noqa: BLE001
+            logger.exception("Deferred notification %s could not be sent.", delivery_id)
+            db.rollback()
+    return processed
+
+
+def _quiet_hours_zone(timezone_name: str | None) -> ZoneInfo:
+    name = (timezone_name or "").strip() or "UTC"
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
+def next_quiet_hours_end(
+    *,
+    start: time,
+    end: time,
+    now: datetime,
+    timezone_name: str | None = None,
+) -> datetime:
+    zone = _quiet_hours_zone(timezone_name)
+    current = now.astimezone(zone)
+    end_at = datetime.combine(current.date(), end, tzinfo=zone)
+    if start < end:
+        result = end_at + timedelta(days=1) if end_at <= current else end_at
+    elif current.time() >= start or end_at <= current:
+        result = end_at + timedelta(days=1)
+    else:
+        result = end_at
+    return result.astimezone(UTC)
+
+
+def _defer_for_quiet_hours(delivery: NotificationDelivery, *, send_after: datetime) -> None:
+    delivery.payload_json = {
+        **(delivery.payload_json or {}),
+        "send_after": send_after.isoformat(),
+        "deferred_reason": "quiet_hours",
+    }
+    delivery.error_text = "Deferred by quiet hours."
+
+
+def _send_after(delivery: NotificationDelivery) -> datetime | None:
+    raw = (delivery.payload_json or {}).get("send_after")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def list_notification_deliveries_for_booking(
@@ -237,11 +323,12 @@ def _in_quiet_hours(*, db: Session, user: User) -> bool:
         or preference.quiet_hours_end is None
     ):
         return False
-    current = datetime.now(UTC).time()
+    zone = _quiet_hours_zone(getattr(preference, "quiet_hours_timezone", None))
+    current = datetime.now(UTC).astimezone(zone).time()
     start = preference.quiet_hours_start
     end = preference.quiet_hours_end
     if start == end:
         return False
     if start < end:
-        return start <= current <= end
-    return current >= start or current <= end
+        return start <= current < end
+    return current >= start or current < end

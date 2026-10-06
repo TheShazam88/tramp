@@ -100,7 +100,7 @@ export function AppLayout() {
               No flight or hotel connection is live right now.{" "}
               {systemStatus?.mockDataEnabled
                 ? "The product may show mock/simulated inventory until a real provider is connected or the admin disables mock data."
-                : "Mock data is disabled, so screens without real provider data will stay empty until live connections are implemented."}
+                : "Mock data is disabled, so screens without real provider data will stay empty until a live connection is enabled."}
             </div>
           )
         ) : null}
@@ -108,7 +108,9 @@ export function AppLayout() {
       </main>
 
       <nav className="bottom-nav" aria-label="Primary">
-        {navigation.map((item) => (
+        {navigation
+          .filter((item) => item.to !== "/admin/integrations" || data.currentUser?.role === "admin")
+          .map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

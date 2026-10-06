@@ -106,6 +106,10 @@ class ResolvedCredentialProfile:
     usage_integration_keys: list[str] = field(default_factory=list)
 
 
+class ProviderSearchError(Exception):
+    """A provider search failed before any inventory could be trusted."""
+
+
 @dataclass(slots=True)
 class ConnectionTestResult:
     ok: bool

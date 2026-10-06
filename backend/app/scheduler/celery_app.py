@@ -19,6 +19,16 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    beat_schedule={
+        "refresh-due-watches": {
+            "task": "travel_watch.refresh_due_watches",
+            "schedule": 60.0,
+        },
+        "deliver-deferred-notifications": {
+            "task": "travel_watch.deliver_deferred_notifications",
+            "schedule": 60.0,
+        },
+    },
 )
 
 celery_app.autodiscover_tasks(["app.scheduler"])

@@ -97,6 +97,8 @@ class AdminRuntimeSettingsResponse(BaseModel):
     mock_data_enabled: bool
     live_inventory_available: bool
     current_inventory_mode: str
+    key_unlock_mode: str
+    master_key_source: str
 
 
 class AdminRuntimeSettingsUpdateRequest(BaseModel):

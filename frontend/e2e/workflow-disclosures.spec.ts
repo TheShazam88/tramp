@@ -11,6 +11,12 @@ const user = {
 };
 
 async function mockWorkflowApi(page: Page) {
+  const quietHours = {
+    quiet_hours_start: null as string | null,
+    quiet_hours_end: null as string | null,
+    quiet_hours_timezone: null as string | null,
+  };
+
   await page.route("**/api/v1/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
 
@@ -31,8 +37,9 @@ async function mockWorkflowApi(page: Page) {
             avoided_airlines: [],
             preferred_hotel_brands: [],
             avoided_hotel_brands: [],
-            quiet_hours_start: null,
-            quiet_hours_end: null,
+            quiet_hours_start: quietHours.quiet_hours_start,
+            quiet_hours_end: quietHours.quiet_hours_end,
+            quiet_hours_timezone: quietHours.quiet_hours_timezone,
             default_notify_channel: "email",
             avoid_redeye: false,
             prefer_refundable: true,
@@ -45,9 +52,82 @@ async function mockWorkflowApi(page: Page) {
           traveler_groups: [],
           payment_methods: [],
           trip_templates: [],
-          tramp_stamp_balance: 0,
+          tramp_stamp_balance: 1,
+          tramp_stamp_history: [
+            {
+              id: "stamp-1",
+              booking_id: "booking-1",
+              awarded_at: "2026-10-06T01:00:00Z",
+              provider: "Amadeus",
+              route: "HND to SIN",
+              amount: 1,
+            },
+          ],
         },
       });
+      return;
+    }
+    if (pathname === "/api/v1/deals/deal-1") {
+      await route.fulfill({
+        json: {
+          id: "deal-1",
+          watch_id: "watch-1",
+          route: "HND to SIN",
+          currency: "JPY",
+          total_price: 118400,
+          source: "amadeus",
+          summary_text: "Live fare",
+          status: "proposed",
+        },
+      });
+      return;
+    }
+    if (pathname === "/api/v1/deals/deal-1/timeline") {
+      await route.fulfill({ status: 404, json: { detail: "No timeline yet." } });
+      return;
+    }
+    if (pathname === "/api/v1/watches/dashboard") {
+      await route.fulfill({
+        json: {
+          highlights: [{ label: "Active watches", value: "1", note: "One trip is being watched." }],
+          watches: [
+            {
+              id: "watch-1",
+              route: "HND to SIN",
+              dates: "12 to 19 Apr",
+              travelers: "Alex",
+              cabin: "Business",
+              status: "active",
+              framing: "best_value",
+              best_now: "¥118,400",
+              insight: "Stored fare",
+              cadence: "Daily refresh",
+              last_searched_at: "2026-10-06T01:00:00Z",
+            },
+            {
+              id: "watch-2",
+              route: "HND to DPS",
+              dates: "Dates flexible",
+              travelers: "Alex",
+              cabin: "Economy",
+              status: "paused",
+              cadence: "Hourly refresh",
+            },
+          ],
+        },
+      });
+      return;
+    }
+    if (pathname === "/api/v1/profile/preferences" && route.request().method() === "PUT") {
+      const body = route.request().postDataJSON() as {
+        quiet_hours_start: string | null;
+        quiet_hours_end: string | null;
+        quiet_hours_timezone: string | null;
+      };
+      quietHours.quiet_hours_start = body.quiet_hours_start;
+      quietHours.quiet_hours_end = body.quiet_hours_end;
+      quietHours.quiet_hours_timezone = body.quiet_hours_timezone;
+      await route.fulfill({ json: { ok: true } });
       return;
     }
     if (pathname === "/api/v1/health") {
@@ -120,6 +200,9 @@ for (const viewport of [
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await mockWorkflowApi(page);
     await page.goto("/watches/new");
+    await expect(page.getByText("Watch", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Admin" })).toHaveCount(0);
+    await expect(page.getByText(/Screen \d/)).toHaveCount(0);
 
     const flightDetails = page.getByRole("group", {
       name: "Advanced flight preferences",
@@ -176,3 +259,51 @@ for (const viewport of [
     ).toBeLessThanOrEqual(viewport.width);
   });
 }
+
+test("trip, household, and admin navigation use the live workspace", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await mockWorkflowApi(page);
+  await page.goto("/watches");
+
+  await expect(page.getByText("Trips", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HND to SIN" })).toBeVisible();
+  await expect(page.getByText(/Last search/)).toBeVisible();
+  await expect(page.getByText(/No search yet/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Admin" })).toHaveCount(0);
+  await expect(page.getByText("Live provider inventory is active.")).toBeVisible();
+
+  await page.goto("/deals/deal-1");
+  await expect(page.getByText("Deal", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HND to SIN" })).toBeVisible();
+
+  await page.goto("/profile");
+  await expect(page.getByText("Household", { exact: true })).toBeVisible();
+  await expect(page.getByText("HND to SIN")).toBeVisible();
+  await expect(page.getByText(/Amadeus/)).toBeVisible();
+  await expect(page.getByText("1 stamp")).toBeVisible();
+  await expect(page.getByText("Managed by an admin")).toBeVisible();
+  await expect(page.getByText("Not set").first()).toBeVisible();
+
+  await page.getByRole("link", { name: "Open presets page" }).click();
+  await expect(page.getByLabel("Quiet hours timezone")).toBeVisible();
+  await page.getByLabel("Quiet hours start").fill("22:00");
+  await page.getByLabel("Quiet hours end").fill("07:00");
+  await page.getByLabel("Quiet hours timezone").selectOption("Asia/Tokyo");
+  const saved = page.waitForRequest(
+    (request) =>
+      request.method() === "PUT" && request.url().includes("/api/v1/profile/preferences"),
+  );
+  await page.getByRole("button", { name: "Save watch presets" }).click();
+  expect((await saved).postDataJSON()).toMatchObject({
+    quiet_hours_start: "22:00",
+    quiet_hours_end: "07:00",
+    quiet_hours_timezone: "Asia/Tokyo",
+  });
+
+  await page.goto("/profile");
+  await expect(page.getByText("22:00 - 07:00 Asia/Tokyo")).toBeVisible();
+
+  await page.goto("/admin/integrations");
+  await expect(page.getByText("Trips", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Admin" })).toHaveCount(0);
+});

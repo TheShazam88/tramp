@@ -5,11 +5,11 @@ import hashlib
 import json
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.activity_maintenance import acquire_activity_writer_lock
@@ -57,6 +57,7 @@ from app.db.models import (
     UserPreference,
     WatchTraveler,
 )
+from app.integrations.amadeus import count_passengers
 from app.integrations.service import (
     get_flight_connectors,
     get_hotel_connector,
@@ -412,23 +413,65 @@ def build_watch_draft(
     )
 
 
+def _provider_error_text(exc: Exception) -> str:
+    message = str(exc).strip() or "A provider search failed."
+    return message[:300]
+
+
 def search_now(*, db: Session, user: User, watch_id: UUID) -> SearchNowResponse:
+    watch = _get_watch_or_404(db=db, user=user, watch_id=watch_id)
+    mock_data_enabled = get_mock_data_enabled(db=db)
+    provider_errors: list[str] = []
+    flight_connectors = (
+        [] if watch.trip_mode == TripMode.HOTELS_ONLY else get_flight_connectors(db=db)
+    )
+    hotel_connector = None
+    if watch.trip_mode != TripMode.FLIGHTS_ONLY:
+        try:
+            hotel_connector = get_hotel_connector(db=db)
+        except ValueError as exc:
+            provider_errors.append(str(exc))
+    want_car = watch.want_car
+    party = _travelers_for_watch(db=db, watch=watch, user=user)
+    on_date = watch.depart_date_from or watch.depart_date_to or datetime.now(UTC).date()
+    adults, children, infants = count_passengers(
+        [traveler.dob for traveler in party],
+        on_date=on_date,
+    )
+    db.expunge(watch)
+    db.commit()
+
+    raw_offers: list[dict[str, object]] = []
+    for flight_connector in flight_connectors:
+        try:
+            raw_offers.extend(
+                flight_connector.search_flights(
+                    watch=watch,
+                    adults=adults,
+                    children=children,
+                    infants=infants,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            provider_errors.append(_provider_error_text(exc))
+    if hotel_connector is not None:
+        try:
+            raw_offers.extend(hotel_connector.search_hotels(watch=watch))
+            if want_car:
+                raw_offers.extend(hotel_connector.search_cars(watch=watch))
+        except Exception as exc:  # noqa: BLE001
+            provider_errors.append(_provider_error_text(exc))
+
     acquire_activity_writer_lock(db)
     watch = _get_watch_or_404(db=db, user=user, watch_id=watch_id)
     travelers = _travelers_for_watch(db=db, watch=watch, user=user)
     observed_at = datetime.now(UTC)
-    mock_data_enabled = get_mock_data_enabled(db=db)
-
-    raw_offers: list[dict[str, object]] = []
-    if watch.trip_mode != TripMode.HOTELS_ONLY:
-        for flight_connector in get_flight_connectors(db=db):
-            raw_offers.extend(flight_connector.search_flights(watch=watch))
-    if watch.trip_mode != TripMode.FLIGHTS_ONLY:
-        hotel_connector = get_hotel_connector(db=db)
-        raw_offers.extend(hotel_connector.search_hotels(watch=watch))
-        if watch.want_car:
-            raw_offers.extend(hotel_connector.search_cars(watch=watch))
-    offers = [normalize_all_in_price(raw_offer) for raw_offer in raw_offers]
+    offers = []
+    for raw_offer in raw_offers:
+        try:
+            offers.append(normalize_all_in_price(raw_offer))
+        except (KeyError, TypeError, ValueError, InvalidOperation, ArithmeticError):
+            provider_errors.append("An offer could not be priced.")
     if not mock_data_enabled:
         offers = [offer for offer in offers if not source_is_simulated(offer.source)]
 
@@ -442,6 +485,7 @@ def search_now(*, db: Session, user: User, watch_id: UUID) -> SearchNowResponse:
         offers=offers,
         mock_data_enabled=mock_data_enabled,
     )
+    coverage_report.gaps.extend(provider_errors)
 
     observations_created = 0
     for offer in offers:
@@ -665,7 +709,7 @@ def serialize_dashboard_card(
     insight = (
         current_deal.summary_text
         if current_deal and current_deal.summary_text
-        else "No stored deals yet. Use search-now to generate deterministic coverage."
+        else "No stored deals yet. Run Search now to refresh prices."
     )
     if watch.status == TripWatchStatus.PAUSED:
         best_now = "Paused"
@@ -687,6 +731,11 @@ def serialize_dashboard_card(
         best_now=best_now,
         insight=insight,
         cadence=_cadence_label(watch),
+        last_searched_at=db.scalar(
+            select(func.max(PriceObservation.observed_at)).where(
+                PriceObservation.watch_id == watch.id
+            )
+        ),
         deal_id=str(current_deal.id) if current_deal else None,
         current_deal_status=current_deal.status.value if current_deal else None,
         search_label="Open deal" if current_deal else "Search now",

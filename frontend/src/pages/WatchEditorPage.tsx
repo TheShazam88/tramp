@@ -63,7 +63,7 @@ export function WatchEditorPage() {
     <div className="stack">
       <Surface className="page-hero">
         <SectionHeading
-          eyebrow="Screen 2"
+          eyebrow="Watch"
           title={data.title}
           description="The mockup shell is preserved, but this page now edits a real watch draft and saves it to the backend."
           action={<Badge tone={watchId ? "luxury" : "value"}>{watchId ? "Editing existing watch" : "New watch"}</Badge>}

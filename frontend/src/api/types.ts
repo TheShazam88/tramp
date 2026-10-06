@@ -40,6 +40,7 @@ export interface WatchSummary {
   bestNow: string;
   insight: string;
   cadence: string;
+  lastSearchedAt?: string;
   searchLabel?: string;
   currentDealId?: string;
   currentDealStatus?: string;
@@ -337,6 +338,7 @@ export interface UserPreferencesProfile {
   avoidedHotelBrands: string[];
   quietHoursStart: string;
   quietHoursEnd: string;
+  quietHoursTimezone: string;
   defaultNotifyChannel: string;
   avoidRedeye: boolean;
   preferRefundable: boolean;
@@ -376,6 +378,14 @@ export interface TripTemplateProfile {
 export interface ProfileWorkspace {
   currentUser: CurrentUser | null;
   trampStampBalance: number;
+  stampHistory: Array<{
+    id: string;
+    bookingId: string;
+    awardedAt: string;
+    provider: string;
+    route: string;
+    amount: number;
+  }>;
   travelers: TravelerProfile[];
   travelerGroups: string[];
   travelerGroupOptions: Array<{
@@ -499,6 +509,8 @@ export interface IntegrationData {
     mockDataEnabled: boolean;
     liveInventoryAvailable: boolean;
     currentInventoryMode: "mock" | "live" | "empty";
+    keyUnlockMode?: string;
+    masterKeySource?: string;
   };
 }
 

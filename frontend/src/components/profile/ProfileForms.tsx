@@ -706,6 +706,40 @@ export function TravelerForm({
   );
 }
 
+const QUIET_HOUR_TIMEZONES = [
+  "UTC",
+  "Asia/Tokyo",
+  "Asia/Singapore",
+  "Asia/Hong_Kong",
+  "Australia/Sydney",
+  "Europe/London",
+  "Europe/Paris",
+  "America/New_York",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "Pacific/Auckland",
+];
+
+function browserTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function defaultQuietHoursTimezone(initial: UserPreferencesProfile) {
+  if (initial.quietHoursTimezone) {
+    return initial.quietHoursTimezone;
+  }
+  if (initial.quietHoursStart || initial.quietHoursEnd) {
+    return "UTC";
+  }
+  return browserTimeZone();
+}
+
+function quietHourTimezones(current: string) {
+  return current && !QUIET_HOUR_TIMEZONES.includes(current)
+    ? [current, ...QUIET_HOUR_TIMEZONES]
+    : QUIET_HOUR_TIMEZONES;
+}
+
 export function PreferencesForm({
   initialValue,
   submitLabel,
@@ -736,6 +770,7 @@ export function PreferencesForm({
     avoidedHotelBrands: listToText(initialValue.avoidedHotelBrands),
     quietHoursStart: initialValue.quietHoursStart,
     quietHoursEnd: initialValue.quietHoursEnd,
+    quietHoursTimezone: defaultQuietHoursTimezone(initialValue),
     defaultNotifyChannel: initialValue.defaultNotifyChannel,
     avoidRedeye: initialValue.avoidRedeye,
     preferRefundable: initialValue.preferRefundable,
@@ -757,6 +792,7 @@ export function PreferencesForm({
       avoidedHotelBrands: listToText(initialValue.avoidedHotelBrands),
       quietHoursStart: initialValue.quietHoursStart,
       quietHoursEnd: initialValue.quietHoursEnd,
+      quietHoursTimezone: defaultQuietHoursTimezone(initialValue),
       defaultNotifyChannel: initialValue.defaultNotifyChannel,
       avoidRedeye: initialValue.avoidRedeye,
       preferRefundable: initialValue.preferRefundable,
@@ -823,6 +859,7 @@ export function PreferencesForm({
           avoidedHotelBrands: textToList(form.avoidedHotelBrands),
           quietHoursStart: form.quietHoursStart,
           quietHoursEnd: form.quietHoursEnd,
+          quietHoursTimezone: form.quietHoursTimezone,
           defaultNotifyChannel: form.defaultNotifyChannel,
           avoidRedeye: form.avoidRedeye,
           preferRefundable: form.preferRefundable,
@@ -1028,6 +1065,28 @@ export function PreferencesForm({
             }
             disabled={disabled}
           />
+          <p className="helper-copy">
+            Times use the selected timezone. Alerts send when the end time is reached.
+          </p>
+        </div>
+
+        <div className="field-stack">
+          <label htmlFor="pref-quiet-timezone">Quiet hours timezone</label>
+          <select
+            id="pref-quiet-timezone"
+            className="text-input"
+            value={form.quietHoursTimezone}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, quietHoursTimezone: event.target.value }))
+            }
+            disabled={disabled}
+          >
+            {quietHourTimezones(form.quietHoursTimezone).map((zone) => (
+              <option key={zone} value={zone}>
+                {zone}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="field-stack">

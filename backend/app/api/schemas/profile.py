@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -136,6 +137,7 @@ class UserPreferenceResponse(BaseModel):
     default_notify_channel: NotificationChannel
     quiet_hours_start: time | None
     quiet_hours_end: time | None
+    quiet_hours_timezone: str | None = None
 
 
 class UserPreferenceUpsertRequest(BaseModel):
@@ -160,6 +162,19 @@ class UserPreferenceUpsertRequest(BaseModel):
     default_notify_channel: NotificationChannel | None = None
     quiet_hours_start: time | None = None
     quiet_hours_end: time | None = None
+    quiet_hours_timezone: str | None = None
+
+    @field_validator("quiet_hours_timezone")
+    @classmethod
+    def validate_quiet_hours_timezone(cls, value: str | None) -> str | None:
+        name = _strip_or_none(value)
+        if name is None:
+            return None
+        try:
+            ZoneInfo(name)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("Choose a valid IANA timezone.") from exc
+        return name
 
     @field_validator("home_airports", "preferred_airlines", "avoided_airlines")
     @classmethod
@@ -572,8 +587,18 @@ class HouseholdWorkspaceSummaryResponse(BaseModel):
     readiness_label: str
 
 
+class TrampStampHistoryItemResponse(BaseModel):
+    id: str
+    booking_id: str
+    awarded_at: datetime
+    provider: str
+    route: str
+    amount: int
+
+
 class ProfileSummaryResponse(BaseModel):
     tramp_stamp_balance: int
+    tramp_stamp_history: list[TrampStampHistoryItemResponse] = Field(default_factory=list)
     settings: UserSettingsResponse
     preferences: UserPreferenceResponse
     travelers: list[TravelerResponse]

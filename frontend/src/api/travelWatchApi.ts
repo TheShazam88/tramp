@@ -110,6 +110,14 @@ interface SignupStartResponseRaw {
 
 interface ProfileSummaryRaw {
   tramp_stamp_balance?: number | null;
+  tramp_stamp_history?: Array<{
+    id?: string | null;
+    booking_id?: string | null;
+    awarded_at?: string | null;
+    provider?: string | null;
+    route?: string | null;
+    amount?: number | null;
+  }> | null;
   settings: {
     id: string;
     email: string;
@@ -130,6 +138,7 @@ interface ProfileSummaryRaw {
     avoided_hotel_brands: string[];
     quiet_hours_start: string | null;
     quiet_hours_end: string | null;
+    quiet_hours_timezone?: string | null;
     default_notify_channel: string;
     avoid_redeye: boolean;
     prefer_refundable: boolean;
@@ -237,6 +246,8 @@ interface WatchRaw {
   best_now?: string | null;
   bestNow?: string | null;
   insight?: string | null;
+  last_searched_at?: string | null;
+  lastSearchedAt?: string | null;
   cadence?: string | null;
   refresh_interval?: string | null;
   origin_iatas?: string[] | null;
@@ -592,11 +603,15 @@ interface AdminIntegrationsResponseRaw {
     mock_data_enabled?: boolean;
     live_inventory_available?: boolean;
     current_inventory_mode?: string;
+    key_unlock_mode?: string;
+    master_key_source?: string;
   } | null;
   runtimeSettings?: {
     mockDataEnabled?: boolean;
     liveInventoryAvailable?: boolean;
     currentInventoryMode?: string;
+    keyUnlockMode?: string;
+    masterKeySource?: string;
   } | null;
 }
 
@@ -1187,6 +1202,8 @@ function mapIntegrationsResponse(raw: AdminIntegrationsResponseRaw | Integration
                 : raw.runtimeSettings.currentInventoryMode === "empty"
                   ? "empty"
                   : "mock",
+            keyUnlockMode: raw.runtimeSettings.keyUnlockMode,
+            masterKeySource: raw.runtimeSettings.masterKeySource,
           }
         : {
             mockDataEnabled:
@@ -1202,6 +1219,9 @@ function mapIntegrationsResponse(raw: AdminIntegrationsResponseRaw | Integration
                     "empty"
                   ? "empty"
                   : "mock",
+            keyUnlockMode: (raw as AdminIntegrationsResponseRaw).runtime_settings?.key_unlock_mode,
+            masterKeySource: (raw as AdminIntegrationsResponseRaw).runtime_settings
+              ?.master_key_source,
           },
   };
 }
@@ -1257,6 +1277,7 @@ function emptyWorkspace(currentUser: CurrentUser | null = null): ProfileWorkspac
   return {
     currentUser,
     trampStampBalance: 0,
+    stampHistory: [],
     travelers: [],
     travelerGroups: [],
     travelerGroupOptions: [],
@@ -1271,6 +1292,7 @@ function emptyWorkspace(currentUser: CurrentUser | null = null): ProfileWorkspac
       avoidedHotelBrands: [],
       quietHoursStart: "",
       quietHoursEnd: "",
+      quietHoursTimezone: "",
       defaultNotifyChannel: "email",
       avoidRedeye: false,
       preferRefundable: false,
@@ -1370,6 +1392,14 @@ function mapProfile(raw: ProfileSummaryRaw): ProfileWorkspace {
       totpEnabled: raw.settings.totp_enabled,
     },
     trampStampBalance: raw.tramp_stamp_balance ?? 0,
+    stampHistory: (raw.tramp_stamp_history ?? []).map((item) => ({
+      id: coerceString(item.id),
+      bookingId: coerceString(item.booking_id),
+      awardedAt: coerceString(item.awarded_at),
+      provider: coerceString(item.provider) || "Provider",
+      route: coerceString(item.route) || "Trip",
+      amount: item.amount ?? 1,
+    })),
     travelers: raw.travelers.map(mapTravelerProfile),
     travelerGroups: raw.traveler_groups.map((group) => group.name),
     travelerGroupOptions: raw.traveler_groups.map((group) => ({
@@ -1388,6 +1418,7 @@ function mapProfile(raw: ProfileSummaryRaw): ProfileWorkspace {
       avoidedHotelBrands: raw.preferences.avoided_hotel_brands ?? [],
       quietHoursStart: raw.preferences.quiet_hours_start ?? "",
       quietHoursEnd: raw.preferences.quiet_hours_end ?? "",
+      quietHoursTimezone: raw.preferences.quiet_hours_timezone ?? "",
       defaultNotifyChannel: raw.preferences.default_notify_channel,
       avoidRedeye: raw.preferences.avoid_redeye,
       preferRefundable: raw.preferences.prefer_refundable,
@@ -1447,58 +1478,6 @@ function mapProfile(raw: ProfileSummaryRaw): ProfileWorkspace {
 
   workspace.travelerGroups = deriveTravelerGroups(workspace);
   return workspace;
-}
-
-async function liveOrFallback<T>(request: () => Promise<T>, fallback: T): Promise<T> {
-  if (useMockData) {
-    return withLatency(fallback);
-  }
-
-  try {
-    return await request();
-  } catch (error) {
-    if (error instanceof ApiError && [404, 501].includes(error.status)) {
-      return withLatency(fallback);
-    }
-
-    throw error;
-  }
-}
-
-function isEndpointUnavailable(error: unknown) {
-  return error instanceof ApiError && [404, 405, 501].includes(error.status);
-}
-
-async function tryCandidateGet<T>(paths: string[]) {
-  for (const path of paths) {
-    try {
-      return await apiClient.get<T>(path);
-    } catch (error) {
-      if (isEndpointUnavailable(error)) {
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
-  return null;
-}
-
-async function tryCandidatePost<T>(paths: string[], body?: unknown) {
-  for (const path of paths) {
-    try {
-      return await apiClient.post<T>(path, body);
-    } catch (error) {
-      if (isEndpointUnavailable(error)) {
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
-  return null;
 }
 
 async function getCurrentUser() {
@@ -1648,6 +1627,8 @@ function mapWatchToSummary(raw: WatchRaw, workspace: ProfileWorkspace): WatchSum
       coerceString(raw.note) ||
       "Watch saved to the live backend. Run a fresh search to update pricing context.",
     cadence: raw.cadence || formatRefreshLabel(raw.refresh_interval || raw.refreshInterval),
+    lastSearchedAt:
+      coerceString(raw.last_searched_at) || coerceString(raw.lastSearchedAt) || undefined,
     currentDealId:
       readDealId(raw.current_deal) || readDealId(raw.latest_deal) || coerceString(raw.deal_id || raw.dealId) || undefined,
     currentDealStatus:
@@ -1829,59 +1810,6 @@ function mapDealPayloadToView(
     readiness,
     badges,
     ctaActions,
-  };
-}
-
-function buildDealFromWatch(
-  watch: WatchResponseRaw,
-  dealId: string,
-  seed?: Partial<DealData> | null,
-): DealViewData {
-  const currentDeal = watch.current_deal;
-  const route = watch.route || formatRouteFromWatch(watch);
-  const cabin = coerceString(watch.cabin_label) || formatCabinLabel(watch.cabin_class);
-  const base = mapDealPayloadToView(currentDeal, {
-    dealId,
-    watchId: coerceString(watch.id) || seed?.watchId,
-    route: seed?.route || route,
-    cabin: seed?.cabin || cabin,
-    context: seed?.context || coerceString(currentDeal?.summary_text),
-    breakdown: seed?.breakdown,
-    explicitPrice: seed?.price,
-    explicitWasPrice: seed?.wasPrice,
-    details: seed?.details,
-    warnings: seed?.warnings,
-    loyaltyPlan: seed?.loyaltyPlan,
-    coverage: seed?.coverage,
-    provider: seed?.provider,
-  });
-
-  return {
-    deal:
-      base ?? {
-        ...seed,
-        id: dealId,
-        watchId: coerceString(watch.id) || seed?.watchId,
-        route: seed?.route || route,
-        cabin: seed?.cabin || cabin,
-        price: seed?.price || "Live price unavailable",
-        wasPrice: seed?.wasPrice || "",
-        context:
-          seed?.context ||
-          "A live deal summary exists on this watch, but the dedicated deal review endpoint is not available yet.",
-        breakdown: seed?.breakdown || "",
-        score: seed?.score ?? 0,
-        details: seed?.details ?? [],
-        loyaltyPlan: seed?.loyaltyPlan ?? [],
-        warnings: seed?.warnings ?? [],
-        coverage: seed?.coverage ?? [],
-        badges: seed?.badges ?? [],
-        ctaActions: seed?.ctaActions ?? [],
-      },
-    source: "watch-derived",
-    fallbackNote:
-      "Detailed deal review is not exposed by this backend yet. Showing the best live context available from the watch record.",
-    approvalAvailable: true,
   };
 }
 
@@ -2353,42 +2281,8 @@ export const travelWatchApi = {
     }
 
     const workspace = await travelWatchApi.getProfileWorkspace();
-
-    try {
-      const response = await apiClient.get<WatchDashboardRaw>("/watches/dashboard");
-      const mapped = mapDashboardResponse(response, workspace);
-      if (mapped) {
-        return mapped;
-      }
-    } catch (error) {
-      if (!(error instanceof ApiError) || ![404, 501].includes(error.status)) {
-        throw error;
-      }
-    }
-
-    try {
-      const response = await apiClient.get<WatchDashboardRaw | WatchRaw[]>("/watches");
-      const mapped = mapDashboardResponse(response, workspace);
-      if (mapped) {
-        return mapped;
-      }
-    } catch (error) {
-      if (error instanceof ApiError && [404, 501].includes(error.status)) {
-        const policy = await getRuntimePolicy();
-        if (policy.mockDataEnabled) {
-          return withLatency(dashboardData);
-        }
-        return deriveDashboardFromWatches([]);
-      }
-
-      throw error;
-    }
-
-    const policy = await getRuntimePolicy();
-    if (policy.mockDataEnabled) {
-      return withLatency(dashboardData);
-    }
-    return deriveDashboardFromWatches([]);
+    const response = await apiClient.get<WatchDashboardRaw>("/watches/dashboard");
+    return mapDashboardResponse(response, workspace) ?? deriveDashboardFromWatches([]);
   },
 
   getWatchDraft: async (watchId?: string): Promise<WatchDraft> => {
@@ -2405,8 +2299,8 @@ export const travelWatchApi = {
       const response = await apiClient.get<WatchRaw>(`/watches/${watchId}`);
       return mapWatchToDraft(response, workspace);
     } catch (error) {
-      if (error instanceof ApiError && [404, 501].includes(error.status)) {
-        return buildWatchDraftFromWorkspace(workspace, watchId);
+      if (error instanceof ApiError && error.status === 404) {
+        throw new Error("This watch could not be found.");
       }
 
       throw error;
@@ -2432,9 +2326,26 @@ export const travelWatchApi = {
       });
     }
 
-    const liveDeal = await tryCandidateGet<LiveDealResponseRaw>([`/deals/${dealId}`]);
-    const liveTimeline = await tryCandidateGet<DealTimelineRaw>([`/deals/${dealId}/timeline`]);
-    if (liveDeal) {
+    let liveDeal: LiveDealResponseRaw;
+    try {
+      liveDeal = await apiClient.get<LiveDealResponseRaw>(`/deals/${dealId}`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        throw new Error("This deal could not be found.");
+      }
+      throw error;
+    }
+
+    let liveTimeline: DealTimelineRaw | null = null;
+    try {
+      liveTimeline = await apiClient.get<DealTimelineRaw>(`/deals/${dealId}/timeline`);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error;
+      }
+    }
+
+    {
       const mapped = mapDealPayloadToView(liveDeal, {
         dealId,
         watchId: coerceString(liveDeal.watch_id) || watchId,
@@ -2468,38 +2379,7 @@ export const travelWatchApi = {
       }
     }
 
-    if (watchId) {
-      try {
-        const watch = await apiClient.get<WatchResponseRaw>(`/watches/${watchId}`);
-        const built = buildDealFromWatch(watch, dealId, options?.seed);
-        built.deal.timeline = mapDealTimeline(liveTimeline);
-        return built;
-      } catch (error) {
-        if (!isEndpointUnavailable(error)) {
-          throw error;
-        }
-      }
-    }
-
-    const policy = await getRuntimePolicy();
-    if (!policy.mockDataEnabled) {
-      throw new Error(
-        "Mock data is disabled and no live deal review payload is available for this watch yet.",
-      );
-    }
-
-    return {
-      deal: {
-        ...dealData,
-        ...options?.seed,
-        id: dealId,
-        watchId,
-      },
-      source: "mock",
-      fallbackNote:
-        "Neither a dedicated deal review endpoint nor a watch-scoped deal summary is available yet. Showing the existing review fallback.",
-      approvalAvailable: false,
-    };
+    throw new Error("The deal review payload could not be read.");
   },
 
   getBookings: async (): Promise<BookingsViewData> => {
@@ -2507,31 +2387,12 @@ export const travelWatchApi = {
       return withLatency({ items: bookingsData, source: "mock" });
     }
 
-    const response = await tryCandidateGet<BookingRaw[] | { items?: BookingRaw[]; bookings?: BookingRaw[] }>([
-      "/bookings",
-    ]);
-    if (response) {
-      return {
-        items: bookingItemsFromResponse(response).map(mapBookingRecord),
-        source: "live",
-      };
-    }
-
-    const policy = await getRuntimePolicy();
-    if (!policy.mockDataEnabled) {
-      return {
-        items: [],
-        source: "live",
-        fallbackNote:
-          "Mock data is disabled and no live bookings payload is available yet.",
-      };
-    }
-
+    const response = await apiClient.get<
+      BookingRaw[] | { items?: BookingRaw[]; bookings?: BookingRaw[] }
+    >("/bookings");
     return {
-      items: bookingsData,
-      source: "mock",
-      fallbackNote:
-        "Live bookings are not exposed by this backend yet. Showing the existing booking placeholders until the endpoint lands.",
+      items: bookingItemsFromResponse(response).map(mapBookingRecord),
+      source: "live",
     };
   },
 
@@ -2686,49 +2547,19 @@ export const travelWatchApi = {
       return withLatency({ dealId: dealData.id, deal: { ...dealData, watchId }, fallback: true });
     }
 
-    const candidatePaths = [`/watches/${watchId}/search-now`, `/watches/${watchId}/search`, `/watches/${watchId}/refresh`];
-    for (const path of candidatePaths) {
-      try {
-        const response = await apiClient.post<SearchNowResponseRaw | unknown>(path);
-        const firstRawDeal =
-          response && typeof response === "object" && "proposed_deals" in response
-            ? (response as SearchNowResponseRaw).proposed_deals?.[0]
-            : null;
-        const dealId = readDealId(response) || (firstRawDeal ? readDealId(firstRawDeal) : "");
-        const firstDeal =
-          firstRawDeal ? mapDealPayloadToView(firstRawDeal, { dealId: dealId || "" }) : null;
-        if (dealId) {
-          return { dealId, deal: firstDeal ?? undefined };
-        }
-
-        if (
-          response &&
-          typeof response === "object" &&
-          "proposed_deals" in response &&
-          Array.isArray((response as SearchNowResponseRaw).proposed_deals) &&
-          ((response as SearchNowResponseRaw).proposed_deals?.length ?? 0) === 0
-        ) {
-          throw new Error("No live inventory is available for this watch right now.");
-        }
-
-        return { queued: true };
-      } catch (error) {
-        if (error instanceof ApiError && [404, 405, 501].includes(error.status)) {
-          continue;
-        }
-
-        throw error;
-      }
+    const response = await apiClient.post<SearchNowResponseRaw>(
+      `/watches/${encodeURIComponent(watchId)}/search-now`,
+    );
+    const firstRawDeal = response.proposed_deals?.[0];
+    const dealId = readDealId(response) || (firstRawDeal ? readDealId(firstRawDeal) : "");
+    if (!dealId) {
+      const gap = response.coverage_report?.gaps?.[0];
+      throw new Error(gap || "No inventory is available for this watch right now.");
     }
-
-    const policy = await getRuntimePolicy();
-    if (!policy.mockDataEnabled) {
-      throw new Error(
-        "Mock data is disabled and no live search endpoint is available for this backend yet.",
-      );
-    }
-
-    return { dealId: dealData.id, deal: { ...dealData, watchId }, fallback: true };
+    const firstDeal = firstRawDeal
+      ? mapDealPayloadToView(firstRawDeal, { dealId })
+      : null;
+    return { dealId, deal: firstDeal ?? undefined };
   },
 
   bookDeal: async (payload: BookDealRequest): Promise<DealApprovalResult> => {
@@ -2963,15 +2794,9 @@ export const travelWatchApi = {
     }
 
     const encodedProviderKey = encodeURIComponent(providerKey);
-    const response = await tryCandidatePost<AdminIntegrationTestRaw>([
-      `/admin/integrations/${encodedProviderKey}/test`,
+    const response = await apiClient.post<AdminIntegrationTestRaw>(
       `/admin/integrations/${encodedProviderKey}/test-connection`,
-    ]);
-
-    if (!response) {
-      throw new Error("The live test-connection endpoint is not available on this backend yet.");
-    }
-
+    );
     return mapIntegrationTestResponse(providerKey, response);
   },
 
@@ -3258,6 +3083,7 @@ export const travelWatchApi = {
       avoided_hotel_brands: preferences.avoidedHotelBrands,
       quiet_hours_start: maybe(preferences.quietHoursStart),
       quiet_hours_end: maybe(preferences.quietHoursEnd),
+      quiet_hours_timezone: preferences.quietHoursTimezone || undefined,
       default_notify_channel: preferences.defaultNotifyChannel,
       avoid_redeye: preferences.avoidRedeye,
       prefer_refundable: preferences.preferRefundable,

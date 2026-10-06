@@ -1,3 +1,3 @@
-from app.api.routes import admin, auth, bookings, deals, health, profile, travelers, watches
+from app.api.routes import admin, auth, bookings, deals, health, profile, watches
 
-__all__ = ["admin", "auth", "bookings", "deals", "health", "profile", "travelers", "watches"]
+__all__ = ["admin", "auth", "bookings", "deals", "health", "profile", "watches"]

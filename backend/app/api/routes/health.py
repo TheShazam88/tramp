@@ -7,7 +7,6 @@ from app.config import get_settings
 from app.db.session import SessionLocal
 from app.integrations.service import (
     get_mock_data_enabled,
-    list_integrations,
     live_inventory_available,
 )
 
@@ -19,7 +18,6 @@ async def healthcheck() -> dict[str, object]:
     settings = get_settings()
     database_ok = False
     redis_ok = False
-    integration_states: list[str] = []
     mock_data_enabled = True
     live_data_available = False
 
@@ -27,10 +25,6 @@ async def healthcheck() -> dict[str, object]:
     try:
         session.execute(text("SELECT 1"))
         database_ok = True
-        integration_states = [
-            f"{item.key}:{item.environment.value}:{'enabled' if item.enabled else 'disabled'}"
-            for item in list_integrations(db=session)
-        ]
         mock_data_enabled = get_mock_data_enabled(db=session)
         live_data_available = live_inventory_available(db=session)
     except Exception:  # noqa: BLE001
@@ -53,9 +47,6 @@ async def healthcheck() -> dict[str, object]:
         "checks": {
             "database": database_ok,
             "redis": redis_ok,
-            "key_unlock_mode": settings.key_unlock_mode.value,
-            "master_key_source": settings.master_key_source.value,
-            "integrations": integration_states,
             "mock_data_enabled": mock_data_enabled,
             "live_inventory_available": live_data_available,
             "inventory_mode": (

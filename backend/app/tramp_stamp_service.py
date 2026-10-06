@@ -8,12 +8,51 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.activity_maintenance import acquire_activity_writer_lock
-from app.db.models import Booking, BookingStatus, Deal, TrampStampLedger, User
+from app.db.models import (
+    Booking,
+    BookingStatus,
+    Deal,
+    DestinationMode,
+    TrampStampLedger,
+    TripWatch,
+    User,
+)
 from app.integrations.service import (
     payload_is_simulated,
     provider_is_simulated,
     source_is_simulated,
 )
+
+
+def list_stamp_history(*, db: Session, user_id: UUID) -> list[dict[str, object]]:
+    rows = db.execute(
+        select(TrampStampLedger, Booking, TripWatch)
+        .join(Booking, Booking.id == TrampStampLedger.booking_id)
+        .join(Deal, Deal.id == Booking.deal_id)
+        .join(TripWatch, TripWatch.id == Deal.watch_id)
+        .where(TrampStampLedger.user_id == user_id)
+        .order_by(TrampStampLedger.awarded_at.desc(), TrampStampLedger.id.desc())
+    ).all()
+    return [
+        {
+            "id": str(stamp.id),
+            "booking_id": str(stamp.booking_id),
+            "awarded_at": stamp.awarded_at,
+            "provider": booking.provider or "Provider",
+            "route": _stamp_route(watch),
+            "amount": stamp.amount,
+        }
+        for stamp, booking, watch in rows
+    ]
+
+
+def _stamp_route(watch: TripWatch) -> str:
+    origin = (watch.origin_iatas or ["Origin"])[0]
+    if watch.destination_mode == DestinationMode.FLEXIBLE:
+        destination = watch.flexible_region or watch.flexible_theme or "Flexible"
+    else:
+        destination = (watch.destination_iatas or ["Destination"])[0]
+    return f"{origin} to {destination}"
 
 
 def stamp_balance(*, db: Session, user_id: UUID) -> int:

@@ -28,6 +28,7 @@ from app.api.schemas.integrations import (
     AdminTestDataPurgeResponse,
 )
 from app.booking_recovery_service import recover_unresolved_booking_attempt
+from app.config import get_settings
 from app.db.models import User
 from app.db.session import get_db_session
 from app.integrations.service import (
@@ -99,15 +100,22 @@ def _summary_response(
         ],
         feature_flags=enabled_flags,
         health_notes=health_notes,
-        runtime_settings=AdminRuntimeSettingsResponse(
-            mock_data_enabled=get_mock_data_enabled(db=db),
-            live_inventory_available=live_inventory_available(db=db),
-            current_inventory_mode="live"
-            if live_inventory_available(db=db)
-            else "mock"
-            if get_mock_data_enabled(db=db)
-            else "empty",
+        runtime_settings=_runtime_settings_response(db),
+    )
+
+
+def _runtime_settings_response(db: Session) -> AdminRuntimeSettingsResponse:
+    settings = get_settings()
+    mock_data_enabled = get_mock_data_enabled(db=db)
+    live_available = live_inventory_available(db=db)
+    return AdminRuntimeSettingsResponse(
+        mock_data_enabled=mock_data_enabled,
+        live_inventory_available=live_available,
+        current_inventory_mode=(
+            "live" if live_available else "mock" if mock_data_enabled else "empty"
         ),
+        key_unlock_mode=settings.key_unlock_mode.value,
+        master_key_source=settings.master_key_source.value,
     )
 
 
@@ -263,21 +271,12 @@ async def update_runtime_settings(
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db_session),
 ) -> AdminRuntimeSettingsResponse:
-    mock_data_enabled = set_mock_data_enabled(
+    set_mock_data_enabled(
         db=db,
         actor=current_user,
         enabled=payload.mock_data_enabled,
     )
-    live_available = live_inventory_available(db=db)
-    return AdminRuntimeSettingsResponse(
-        mock_data_enabled=mock_data_enabled,
-        live_inventory_available=live_available,
-        current_inventory_mode="live"
-        if live_available
-        else "mock"
-        if mock_data_enabled
-        else "empty",
-    )
+    return _runtime_settings_response(db)
 
 
 @router.post("/credential-profiles", response_model=AdminCredentialProfileResponse)

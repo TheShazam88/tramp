@@ -1,5 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
 import { Navigate, createBrowserRouter } from "react-router-dom";
 
+import { queryKeys, travelWatchApi } from "@/api/travelWatchApi";
 import { AppLayout } from "@/layouts/AppLayout";
 import { AdminIntegrationsPage } from "@/pages/AdminIntegrationsPage";
 import { BookingsPage } from "@/pages/BookingsPage";
@@ -13,6 +15,23 @@ import { ProfileSettingsPage } from "@/pages/ProfileSettingsPage";
 import { TwoFactorSetupPage } from "@/pages/TwoFactorSetupPage";
 import { WatchEditorPage } from "@/pages/WatchEditorPage";
 import { WatchesPage } from "@/pages/WatchesPage";
+
+function AdminOnly() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: queryKeys.profile,
+    queryFn: travelWatchApi.getProfileWorkspace,
+  });
+
+  if (isLoading) {
+    return <div className="surface-card">Loading your workspace...</div>;
+  }
+
+  if (isError || data?.currentUser?.role !== "admin") {
+    return <Navigate to="/watches" replace />;
+  }
+
+  return <AdminIntegrationsPage />;
+}
 
 export const router = createBrowserRouter([
   {
@@ -42,8 +61,8 @@ export const router = createBrowserRouter([
       { path: "profile", element: <ProfileSettingsPage /> },
       { path: "profile/notifications", element: <ProfileNotificationsPage /> },
       { path: "profile/presets", element: <ProfilePresetsPage /> },
-      { path: "admin/integrations", element: <AdminIntegrationsPage /> },
-      { path: "admin/integrations/:categoryId", element: <AdminIntegrationsPage /> },
+      { path: "admin/integrations", element: <AdminOnly /> },
+      { path: "admin/integrations/:categoryId", element: <AdminOnly /> },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

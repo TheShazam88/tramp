@@ -835,7 +835,7 @@ export function DealReviewPage() {
 
       <Surface className="page-hero">
         <SectionHeading
-          eyebrow="Screen 3"
+          eyebrow="Deal"
           title={`${deal.route} · ${deal.cabin}`}
           description="Review price context, loyalty mapping, coverage, and warnings before secure booking or rejection."
           action={

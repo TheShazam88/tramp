@@ -52,9 +52,11 @@ export function ProfileSettingsPage() {
     queryKey: queryKeys.profile,
     queryFn: travelWatchApi.getProfileWorkspace,
   });
+  const isAdmin = data?.currentUser?.role === "admin";
   const { data: integrationData } = useQuery({
     queryKey: queryKeys.integrations,
     queryFn: travelWatchApi.getIntegrations,
+    enabled: isAdmin,
   });
 
   const refreshWorkspace = async () => {
@@ -144,11 +146,36 @@ export function ProfileSettingsPage() {
   return (
     <div className="stack">
       <SectionHeading
-        eyebrow="Screen 4"
+        eyebrow="Household"
         title="Profile and settings"
         description="Travelers, defaults, payment methods, and starter templates live here so every new watch can stay lightweight."
         action={<Button to={data.currentUser?.totpEnabled ? "/onboarding" : "/setup/2fa"}>{data.currentUser?.totpEnabled ? "Review onboarding" : "Finish 2FA setup"}</Button>}
       />
+
+      <Surface>
+        <SectionHeading
+          eyebrow="Rewards"
+          title="TRAMP-Stamps"
+          description="One stamp is awarded for each successful live booking. Simulated bookings do not earn a stamp."
+        />
+        {(data.stampHistory ?? []).length === 0 ? (
+          <p className="item-copy">No stamps yet. A live booking adds one stamp to this list.</p>
+        ) : (
+          <div className="stack-tight">
+            {(data.stampHistory ?? []).map((stamp) => (
+              <div key={stamp.id} className="summary-row">
+                <div>
+                  <p className="item-title">{stamp.route}</p>
+                  <p className="item-copy">
+                    {stamp.provider} · {stamp.awardedAt ? new Date(stamp.awardedAt).toLocaleString() : "Awarded"}
+                  </p>
+                </div>
+                <Badge tone="luxury">{stamp.amount} stamp</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </Surface>
 
       <Surface>
         <SectionHeading
@@ -190,11 +217,13 @@ export function ProfileSettingsPage() {
               <Surface className="field-card">
                 <p className="field-label">Calendar sync</p>
                 <strong>
-                  {calendarIntegration
-                    ? `${calendarIntegration.environment} / ${calendarIntegration.enabled ? "enabled" : "disabled"}`
-                    : "Unavailable"}
+                  {isAdmin
+                    ? calendarIntegration
+                      ? `${calendarIntegration.environment} / ${calendarIntegration.enabled ? "enabled" : "disabled"}`
+                      : "Unavailable"
+                    : "Managed by an admin"}
                 </strong>
-                {calendarIntegration?.validationHelp ? (
+                {isAdmin && calendarIntegration?.validationHelp ? (
                   <p className="item-copy">{calendarIntegration.validationHelp}</p>
                 ) : null}
               </Surface>
@@ -426,7 +455,7 @@ export function ProfileSettingsPage() {
             <p className="field-label">Quiet hours</p>
             <strong>
               {data.preferences.quietHoursStart && data.preferences.quietHoursEnd
-                ? `${data.preferences.quietHoursStart} - ${data.preferences.quietHoursEnd}`
+                ? `${data.preferences.quietHoursStart} - ${data.preferences.quietHoursEnd} ${data.preferences.quietHoursTimezone || "UTC"}`
                 : "Not set"}
             </strong>
           </Surface>

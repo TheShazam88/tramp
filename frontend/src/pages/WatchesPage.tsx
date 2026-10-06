@@ -13,6 +13,17 @@ import {
 } from "@/components/ui/primitives";
 import { ApiError } from "@/api/client";
 
+function formatSearchTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError && typeof error.payload === "object" && error.payload) {
     const detail = (error.payload as { detail?: unknown }).detail;
@@ -87,7 +98,7 @@ export function WatchesPage() {
   return (
     <div className="stack">
       <SectionHeading
-        eyebrow="Screen 1"
+        eyebrow="Trips"
         title="Your trips"
         description="A mobile-first dashboard for active watches, live pricing context, and quick actions."
         action={<Button to="/watches/new">Create watch</Button>}
@@ -157,7 +168,12 @@ export function WatchesPage() {
               </div>
 
               <p className="watch-insight">{watch.insight}</p>
-              <p className="item-copy">{watch.cadence}</p>
+              <p className="item-copy">
+                {watch.cadence}
+                {watch.lastSearchedAt
+                  ? ` · Last search ${formatSearchTime(watch.lastSearchedAt)}`
+                  : " · No search yet"}
+              </p>
               {watch.readiness ? (
                 <p className="item-copy">
                   Readiness {watch.readiness.score}/100 · {watch.readiness.label}

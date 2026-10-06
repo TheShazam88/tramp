@@ -16,6 +16,11 @@ from app.db.models import (
     PaymentMethod,
     TripWatch,
 )
+from app.integrations.amadeus import (
+    AmadeusSearchError,
+    search_flight_offers,
+    test_amadeus_credentials,
+)
 from app.integrations.types import (
     BookingExecutionResult,
     CalendarConnector,
@@ -134,7 +139,27 @@ class LocalFlightConnector:
     def connector_name(self) -> str:
         return self.config.runtime_connector
 
-    def search_flights(self, *, watch: TripWatch) -> list[dict[str, Any]]:
+    def search_flights(
+        self,
+        *,
+        watch: TripWatch,
+        adults: int = 1,
+        children: int = 0,
+        infants: int = 0,
+    ) -> list[dict[str, Any]]:
+        if self.config.runtime_connector == "amadeus":
+            try:
+                return search_flight_offers(
+                    credentials=self.config.credentials,
+                    watch=watch,
+                    adults=adults,
+                    children=children,
+                    infants=infants,
+                )
+            except AmadeusSearchError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise AmadeusSearchError("Amadeus flight search failed.") from exc
         offers = [
             offer
             for offer in DeterministicMockAdapter().search(watch=watch)
@@ -146,6 +171,11 @@ class LocalFlightConnector:
         return [offer for offer in offers if offer.get("source") == expected_source]
 
     def test_connection(self) -> ConnectionTestResult:
+        if (
+            self.config.key == "flights_amadeus"
+            and self.config.environment == IntegrationEnvironment.LIVE
+        ):
+            return test_amadeus_credentials(config=self.config)
         return _build_test_result(config=self.config, capability="Flight search")
 
 

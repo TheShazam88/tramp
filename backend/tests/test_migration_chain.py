@@ -571,7 +571,8 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _enum_labels(database_url, "integration_environment") == ["TEST", "LIVE"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260715_0011"
+    assert _revision(database_url) == "20261006_0012"
+    assert "quiet_hours_timezone" in _column_names(database_url, "user_preferences")
     assert "tramp_stamp_ledger" in _table_names(database_url)
     assert "ck_tramp_stamp_ledger_reason" in _check_constraint_names(
         database_url,
@@ -606,7 +607,7 @@ def test_blank_postgres_upgrade_and_full_round_trip() -> None:
     assert _table_names(database_url) == ["alembic_version"]
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260715_0011"
+    assert _revision(database_url) == "20261006_0012"
 
 
 def test_0011_repairs_an_already_upgraded_database_missing_reason_constraint() -> None:
@@ -629,7 +630,7 @@ def test_0011_repairs_an_already_upgraded_database_missing_reason_constraint() -
     )
 
     _run_alembic(database_url, "upgrade", "head")
-    assert _revision(database_url) == "20260715_0011"
+    assert _revision(database_url) == "20261006_0012"
     assert "ck_tramp_stamp_ledger_reason" in _check_constraint_names(
         database_url,
         "tramp_stamp_ledger",
@@ -857,7 +858,7 @@ def test_0005_cleans_interrupted_concurrent_index_before_retry() -> None:
 
     _run_alembic(database_url, "upgrade", "head")
 
-    assert _revision(database_url) == "20260715_0011"
+    assert _revision(database_url) == "20261006_0012"
     assert temporary_index not in _index_names(database_url, "booking_attempts")
     assert "uq_booking_attempts_idempotency_key" in _unique_constraint_names(
         database_url,
